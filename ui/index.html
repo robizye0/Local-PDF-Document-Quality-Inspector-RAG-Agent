@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SpecCheck — PDF Compliance Checker</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d28;
+      --border: #2a2d3a;
+      --accent: #4f8cff;
+      --accent-2: #22c55e;
+      --danger: #ef4444;
+      --warn: #f59e0b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: ui-monospace, "Segoe UI", system-ui, sans-serif;
+      min-height: 100vh;
+    }
+    /* ── Nav ─────────────────────────────────────────── */
+    nav {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem; display: flex; align-items: center; gap: 2rem;
+    }
+    nav .logo { font-size: 1.25rem; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; }
+    nav a { color: var(--muted); text-decoration: none; font-size: 0.875rem; }
+    nav a:hover { color: var(--text); }
+
+    /* ── Layout ─────────────────────────────────────── */
+    main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+    /* ── Hero ───────────────────────────────────────── */
+    .hero { margin-bottom: 2.5rem; }
+    .hero h1 { font-size: 1.75rem; margin-bottom: .5rem; }
+    .hero p { color: var(--muted); max-width: 600px; line-height: 1.6; }
+
+    /* ── Cards ─────────────────────────────────────── */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem;
+    }
+    .card h2 { font-size: 0.875rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 1rem; }
+
+    /* ── Upload zone ───────────────────────────────── */
+    .dropzone {
+      border: 2px dashed var(--border); border-radius: 8px; padding: 2rem;
+      text-align: center; cursor: pointer; transition: border-color .2s;
+    }
+    .dropzone.drag { border-color: var(--accent); }
+    .dropzone input { display: none; }
+    .dropzone .icon { font-size: 2.5rem; margin-bottom: .5rem; }
+    .dropzone p { color: var(--muted); font-size: 0.875rem; }
+
+    /* ── Results ───────────────────────────────────── */
+    .badge {
+      display: inline-block; padding: .25rem .75rem; border-radius: 4px;
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+    }
+    .badge.pass { background: rgba(34,197,94,.15); color: var(--accent-2); }
+    .badge.fail { background: rgba(239,68,68,.15); color: var(--danger); }
+    .badge.warn { background: rgba(245,158,11,.15); color: var(--warn); }
+
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .kpi { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+    .kpi .num { font-size: 1.75rem; font-weight: 700; }
+    .kpi .lbl { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; margin-top: .25rem; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th, td { padding: .6rem .75rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: .5px; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+
+    .severity-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    .sev-1, .sev-2 { background: var(--accent-2); }
+    .sev-3 { background: var(--warn); }
+    .sev-4, .sev-5 { background: var(--danger); }
+
+    /* ── Review queue ───────────────────────────────── */
+    .review-item {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 1rem; margin-bottom: 1rem;
+    }
+    .review-item h3 { font-size: 0.875rem; margin-bottom: .5rem; color: var(--warn); }
+    textarea, select, input[type=text] {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      border-radius: 4px; padding: .5rem .75rem; width: 100%; font-size: .875rem;
+    }
+    button {
+      background: var(--accent); color: #fff; border: none; border-radius: 4px;
+      padding: .5rem 1.25rem; cursor: pointer; font-weight: 600; font-size: .875rem;
+    }
+    button:hover { opacity: .85; }
+    .hidden { display: none; }
+
+    pre {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 1rem; overflow: auto; font-size: .75rem; max-height: 400px;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo">⚙ SpecCheck</div>
+    <a href="#" onclick="showTab('check')">Check Document</a>
+    <a href="#" onclick="showTab('reviews')">Review Queue</a>
+  </nav>
+
+  <main>
+    <!-- ── HERO ──────────────────────────────────────────── -->
+    <div class="hero">
+      <h1>PDF Specification Compliance Checker</h1>
+      <p>Upload a technical PDF, define the spec clause, and get a machine-readable Pydantic-validated quality inspection report — complete with confidence scores and a human-in-the-loop flag for ambiguous cases.</p>
+    </div>
+
+    <!-- ── CHECK TAB ────────────────────────────────────── -->
+    <div id="tab-check">
+      <div class="card">
+        <h2>1. Upload PDF</h2>
+        <div class="dropzone" id="dz" onclick="document.getElementById('file').click()">
+          <div class="icon">📄</div>
+          <p>Click or drag a PDF here</p>
+          <input type="file" id="file" accept=".pdf" onchange="onFile(this.files[0])" />
+        </div>
+        <div id="file-info" style="margin-top:.75rem;font-size:.8rem;color:var(--muted)"></div>
+      </div>
+
+      <div class="card">
+        <h2>2. Specification</h2>
+        <textarea id="spec" rows="4" placeholder="e.g. ISO 9001 §8.6 — All inspection reports must include: deviation_found, severity_level (1–5), recommended_fix, and a signed inspector ID."></textarea>
+      </div>
+
+      <button id="run-btn" onclick="runCheck()" style="margin-bottom:1.5rem;">▶ Run Compliance Check</button>
+      <div id="loading" class="hidden" style="color:var(--muted);margin-bottom:1rem;">⏳ Running checks via Ollama…</div>
+    </div>
+
+    <!-- ── RESULTS ─────────────────────────────────────── -->
+    <div id="results" class="hidden">
+      <div class="card">
+        <h2>3. Inspection Report</h2>
+        <div class="kpi-row" id="kpis"></div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Clause</th>
+                <th>Requirement</th>
+                <th>Status</th>
+                <th>Severity</th>
+                <th>Confidence</th>
+                <th>Review</th>
+              </tr>
+            </thead>
+            <tbody id="checks-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Raw JSON (Pydantic-validated)</h2>
+        <pre id="raw-json"></pre>
+      </div>
+    </div>
+
+    <!-- ── REVIEWS TAB ──────────────────────────────────── -->
+    <div id="tab-reviews" class="hidden">
+      <div class="card">
+        <h2>Human Review Queue</h2>
+        <div id="review-list"></div>
+      </div>
+    </div>
+
+    <!-- ── TAB SWITCHER ──────────────────────────────────── -->
+    <script>
+      function showTab(name) {
+        document.getElementById('tab-check').classList.toggle('hidden', name !== 'check');
+        document.getElementById('results').classList.toggle('hidden', name !== 'check');
+        document.getElementById('tab-reviews').classList.toggle('hidden', name !== 'reviews');
+        if (name === 'reviews') loadReviews();
+      }
+      let currentFile = null;
+      const dz = document.getElementById('dz');
+      dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+      dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+      dz.addEventListener('drop', e => {
+        e.preventDefault(); dz.classList.remove('drag');
+        onFile(e.dataTransfer.files[0]);
+      });
+      function onFile(f) {
+        if (!f) return;
+        currentFile = f;
+        document.getElementById('file-info').textContent = `📎 ${f.name} (${(f.size/1024).toFixed(1)} KB)`;
+      }
+      async function runCheck() {
+        if (!currentFile) { alert('Please select a PDF file first.'); return; }
+        const spec = document.getElementById('spec').value || 'General quality standards (ISO 9001 §8.6)';
+        document.getElementById('loading').classList.remove('hidden');
+        const fd = new FormData();
+        fd.append('file', currentFile);
+        fd.append('specification', spec);
+        try {
+          const res = await fetch('/check', { method: 'POST', body: fd });
+          if (!res.ok) { const e = await res.json(); alert('Error: ' + (e.detail || res.status)); return; }
+          const data = await res.json();
+          renderResults(data);
+          showTab('check');
+        } catch (e) { alert('Request failed: ' + e.message); }
+        finally { document.getElementById('loading').classList.add('hidden'); }
+      }
+      function renderResults(data) {
+        document.getElementById('results').classList.remove('hidden');
+        const s = data.summary;
+        document.getElementById('kpis').innerHTML = `
+          <div class="kpi"><div class="num">${s.total_checks}</div><div class="lbl">Total Checks</div></div>
+          <div class="kpi"><div class="num" style="color:var(--accent-2)">${s.passed}</div><div class="lbl">Passed</div></div>
+          <div class="kpi"><div class="num" style="color:var(--danger)">${s.failed}</div><div class="lbl">Failed</div></div>
+          <div class="kpi"><div class="num" style="color:var(--warn)">${s.flagged_for_review}</div><div class="lbl">Flagged for Review</div></div>
+          <div class="kpi"><div class="num">${(s.overall_status==='PASS'?'✔':'✖')}</div><div class="lbl">Overall</div></div>
+        `;
+        fetch(data.report_path).then(r=>r.json()).then(report => {
+          document.getElementById('raw-json').textContent = JSON.stringify(report, null, 2);
+          const tbody = document.getElementById('checks-tbody');
+          tbody.innerHTML = report.checks.map(c => `
+            <tr>
+              <td>${c.check_id}</td>
+              <td>${c.clause_reference}</td>
+              <td title="${c.requirement}">${c.requirement.slice(0,60)}${c.requirement.length>60?'…':''}</td>
+              <td><span class="badge ${c.status.toLowerCase()}">${c.status}</span></td>
+              <td><span class="severity-dot sev-${c.severity_level}"></span>${c.severity_level}</td>
+              <td>${(c.confidence_score*100).toFixed(0)}%</td>
+              <td>${c.needs_human_review ? '<span class="badge warn">⚠ review</span>' : '—'}</td>
+            </tr>
+          `).join('');
+        });
+      }
+      async function loadReviews() {
+        const res = await fetch('/reviews');
+        const tickets = await res.json();
+        const el = document.getElementById('review-list');
+        if (!tickets.length) { el.innerHTML = '<p style="color:var(--muted)">No open review tickets.</p>'; return; }
+        el.innerHTML = tickets.map(t => `
+          <div class="review-item">
+            <h3>⚠ ${t.ticket_id} — ${t.document_name}</h3>
+            <p style="font-size:.8rem;color:var(--muted);margin-bottom:.5rem;">${t.reason}</p>
+            <pre style="max-height:120px;font-size:.7rem;">${JSON.stringify(t.check, null, 2)}</pre>
+          </div>
+        `).join('');
+      }
+    </script>
+  </main>
+</body>
+</html>

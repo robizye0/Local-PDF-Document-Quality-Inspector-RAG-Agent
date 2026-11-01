@@ -1,0 +1,14 @@
+.git
+__pycache__
+*.pyc
+.venv
+venv
+.env
+*.egg-info
+dist
+build
+.hermes
+docs/demo.gif
+data/uploads
+data/reports
+data/reviews

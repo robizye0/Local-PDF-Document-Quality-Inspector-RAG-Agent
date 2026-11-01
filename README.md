@@ -204,3 +204,4 @@ speccheck/
 ## License
 
 MIT
+[![CI](https://github.com/robizye0/Local-PDF-Document-Quality-Inspector-RAG-Agent-/workflows/CI/badge.svg)](https://github.com/robizye0/Local-PDF-Document-Quality-Inspector-RAG-Agent-/actions)

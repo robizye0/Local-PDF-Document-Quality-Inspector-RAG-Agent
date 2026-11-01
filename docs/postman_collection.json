@@ -1,0 +1,84 @@
+{
+  "info": {
+    "name": "SpecCheck API",
+    "description": "Postman collection for SpecCheck PDF Compliance Checker API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8000"}
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health",
+        "description": "Check API and Ollama status"
+      }
+    },
+    {
+      "name": "List Profiles",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/profiles",
+        "description": "List available inspection profiles"
+      }
+    },
+    {
+      "name": "Inspect PDF",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/inspect",
+        "header": [
+          {"key": "Content-Type", "value": "multipart/form-data"}
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {"key": "file", "type": "file", "description": "PDF file to inspect"},
+            {"key": "specification", "value": "ISO 9001 §8.6 compliance check", "type": "text"},
+            {"key": "profile_id", "value": "iso-compliance", "type": "text"}
+          ]
+        },
+        "description": "Upload a PDF for compliance inspection"
+      }
+    },
+    {
+      "name": "Get Report",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/reports/RPT-XXXXXXXX",
+        "description": "Download JSON report by ID"
+      }
+    },
+    {
+      "name": "Download PDF Certificate",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/reports/RPT-XXXXXXXX/pdf",
+        "description": "Download PDF certificate by report ID"
+      }
+    },
+    {
+      "name": "Review Queue",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/reviews",
+        "description": "List open human-review tickets"
+      }
+    },
+    {
+      "name": "Resolve Review Ticket",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/reviews/REV-XXXXXXXX/resolve",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"resolution\": \"Confirmed as FAIL; escalated to engineering.\", \"operator\": \"alice\"}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "description": "Mark a review ticket as resolved"
+      }
+    }
+  ]
+}

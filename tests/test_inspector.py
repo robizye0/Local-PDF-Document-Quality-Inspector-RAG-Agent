@@ -4,17 +4,31 @@ Tests for inspector logic — retry, JSON repair, metrics, rule profiles.
 
 from __future__ import annotations
 
-import json
-import sys
+import importlib.util
 import os
-
-# Ensure backend is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 import pytest
 
-from ollama_client import _repair_json, InspectionMetrics
-from rule_profiles import get_profile, list_profiles, get_report_schema, BUILTIN_PROFILES
+_BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
+
+def _load(name, filename):
+    import sys
+    if _BACKEND_DIR not in sys.path:
+        sys.path.insert(0, _BACKEND_DIR)
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_BACKEND_DIR, filename))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+ollama_client = _load("ollama_client", "ollama_client.py")
+rule_profiles = _load("rule_profiles", "rule_profiles.py")
+
+_repair_json = ollama_client._repair_json
+InspectionMetrics = ollama_client.InspectionMetrics
+get_profile = rule_profiles.get_profile
+list_profiles = rule_profiles.list_profiles
+get_report_schema = rule_profiles.get_report_schema
+BUILTIN_PROFILES = rule_profiles.BUILTIN_PROFILES
 
 
 def test_repair_json_strips_fences():

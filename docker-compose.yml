@@ -14,8 +14,15 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3.1:8b-instruct-q4_K_M
       - CONFIDENCE_THRESHOLD=0.85
+      - LANGFUSE_PUBLIC_KEY=pk-lf-xxxx
+      - LANGFUSE_SECRET_KEY=sk-lf-xxxx
+      - LANGFUSE_HOST=http://langfuse:3000
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - CHROMA_PERSIST_DIR=/app/data/chromadb
     depends_on:
       ollama:
+        condition: service_healthy
+      langfuse:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -52,5 +59,22 @@ services:
       retries: 10
     restart: unless-stopped
 
+  langfuse:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXTAUTH_SECRET=your-secret-here
+      - NEXTAUTH_URL=http://localhost:3000
+    volumes:
+      - langfuse-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/public/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   ollama-data:
+  langfuse-data:

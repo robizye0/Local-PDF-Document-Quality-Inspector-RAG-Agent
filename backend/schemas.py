@@ -53,3 +53,6 @@ class QualityInspectionReport(BaseModel):
         if value.upper() not in ("PASS", "FAIL"):
             raise ValueError("overall_status must be PASS or FAIL")
         return value.upper()
+
+ComplianceCheck.model_rebuild()
+QualityInspectionReport.model_rebuild()

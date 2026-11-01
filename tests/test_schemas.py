@@ -4,9 +4,23 @@ Tests for Pydantic schemas — edge cases and validation.
 
 from __future__ import annotations
 
+import importlib.util
+import os
+
 import pytest
 
-from schemas import ComplianceCheck, QualityInspectionReport, SeverityLevel
+# Load backend schemas module directly to avoid namespace collision
+_BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
+_spec = importlib.util.spec_from_file_location(
+    "backend_schemas",
+    os.path.join(_BACKEND_DIR, "schemas.py"),
+)
+_schemas_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_schemas_mod)
+
+ComplianceCheck = _schemas_mod.ComplianceCheck
+QualityInspectionReport = _schemas_mod.QualityInspectionReport
+SeverityLevel = _schemas_mod.SeverityLevel
 
 
 def test_compliance_check_valid():
@@ -60,7 +74,7 @@ def test_compliance_check_invalid_confidence():
             requirement="Test",
             status="PASS",
             severity_level=SeverityLevel.LEVEL_1,
-            confidence_score=1.5,  # out of range
+            confidence_score=1.5,
             needs_human_review=False,
         )
 
@@ -89,7 +103,6 @@ def test_quality_inspection_report_valid():
 
 
 def test_report_inconsistent_counts():
-    """Overall status should still validate even if counts look inconsistent."""
     report = QualityInspectionReport(
         document_name="test.pdf",
         total_checks=2,

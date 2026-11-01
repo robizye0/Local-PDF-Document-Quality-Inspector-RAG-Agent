@@ -3,6 +3,7 @@ Ollama client with Tenacity retry, JSON repair, metrics, and dynamic schema supp
 """
 
 from __future__ import annotations
+from tracing.langfuse_tracing import trace_ollama_call
 
 import json
 import logging
@@ -67,6 +68,7 @@ class OllamaClient:
             logger.error("Ollama health check failed: %s", exc)
             return False
 
+    @trace_ollama_call(operation_name="ollama.generate")
     def generate_json(
         self,
         system_prompt: str,

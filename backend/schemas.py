@@ -66,5 +66,29 @@ class EvidenceVerification(BaseModel):
     decisions: list[EvidenceDecision] = Field(default_factory=list, max_length=3)
 
 
+class CrossReferenceFinding(BaseModel):
+    finding_id: str = Field(pattern=r"^XRF-\d{3}$")
+    source_document: str
+    target_document: str
+    clause_reference: str
+    status: Literal["PASS", "FAIL", "UNCERTAIN"]
+    source_evidence: str = Field(default="", max_length=1200)
+    target_evidence: str = Field(default="", max_length=1200)
+    contradiction: str = Field(default="", max_length=1200)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    needs_human_review: bool = False
+    review_reason: str = Field(default="", max_length=500)
+
+
+class CrossReferenceReport(BaseModel):
+    document_names: list[str] = Field(min_length=2, max_length=2)
+    total_findings: int = Field(ge=0)
+    passed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    flagged_for_review: int = Field(ge=0)
+    overall_status: Literal["PASS", "FAIL", "REVIEW"]
+    findings: list[CrossReferenceFinding] = Field(default_factory=list)
+
+
 ComplianceCheck.model_rebuild()
 QualityInspectionReport.model_rebuild()

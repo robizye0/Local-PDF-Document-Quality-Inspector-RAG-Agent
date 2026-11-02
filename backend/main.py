@@ -4,6 +4,7 @@ FastAPI backend — microservice orchestration layer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -34,9 +36,12 @@ from invoice_validator import InvoiceValidation, reconcile_invoice_report
 from sandbox_validator import SandboxValidationError, run_invoice_validation
 from evidence_verifier import apply_verification_decisions
 from feedback import PREFERENCE_PAIRS_PATH
+from jobs import job_manager
+from cross_reference import normalize_cross_reference_counts
+from webhooks import WebhookDispatcher
 from review_queue import enqueue_review, list_open_tickets, resolve_review_ticket, REVIEW_DIR
 from rule_profiles import get_profile, list_profiles
-from schemas import QualityInspectionReport
+from schemas import CrossReferenceReport, QualityInspectionReport
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
@@ -73,6 +78,7 @@ ollama = OllamaClient(
     provider=INFERENCE_PROVIDER,
 )
 rag = SemanticRAG()
+webhooks = WebhookDispatcher()
 
 
 class HealthResponse(BaseModel):
@@ -93,6 +99,12 @@ class InspectResponse(BaseModel):
     report_path: str
     pdf_path: str | None = None
     review_tickets: list[dict]
+
+
+class CrossReferenceResponse(BaseModel):
+    cross_reference_id: str
+    report: CrossReferenceReport
+    metrics: dict[str, Any] | None = None
 
 
 class ProfileResponse(BaseModel):
@@ -121,6 +133,34 @@ async def list_profiles_endpoint():
     return list_profiles()
 
 
+@app.post("/api/v1/jobs/inspect", status_code=202)
+async def submit_inspection_job(
+    file: UploadFile = File(...),
+    specification: str = Form("General manufacturing quality standards (ISO 9001 §8.6)"),
+    profile_id: str | None = Form(None),
+):
+    """Queue an inspection and return immediately with a pollable job ID."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=422, detail="Only PDF files are accepted.")
+    content = await file.read()
+    job_id = job_manager.submit(
+        _run_inspection_job,
+        Path(file.filename).name,
+        content,
+        specification,
+        profile_id,
+    )
+    return {"job_id": job_id, "status": "queued", "poll_url": f"/api/v1/jobs/{job_id}"}
+
+
+@app.get("/api/v1/jobs/{job_id}")
+async def get_inspection_job(job_id: str):
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job
+
+
 @app.post("/api/v1/inspect", response_model=InspectResponse, status_code=201)
 async def inspect_document(
     file: UploadFile = File(...),
@@ -139,6 +179,22 @@ async def inspect_document(
     except Exception as exc:
         logger.exception("Unhandled inspection error")
         raise HTTPException(status_code=500, detail=f"Inspection failed: {exc}")
+
+
+def _run_inspection_job(
+    filename: str,
+    content: bytes,
+    specification: str,
+    profile_id: str | None,
+) -> InspectResponse:
+    temporary_file = SpooledTemporaryFile(max_size=10 * 1024 * 1024)
+    temporary_file.write(content)
+    temporary_file.seek(0)
+    upload = UploadFile(file=temporary_file, filename=filename)
+    try:
+        return asyncio.run(_inspect_document_impl(upload, specification, profile_id))
+    finally:
+        temporary_file.close()
 
 
 async def _inspect_document_impl(
@@ -237,6 +293,16 @@ async def _inspect_document_impl(
                 "reason": ticket.reason,
                 "confidence": check.confidence_score,
             })
+            webhooks.dispatch(
+                "review.flagged",
+                {
+                    "ticket_id": ticket.ticket_id,
+                    "document_name": file.filename,
+                    "profile_id": profile_id,
+                    "check": check.model_dump(),
+                    "reason": check.review_reason,
+                },
+            )
 
     trace_review_routing(len(review_tickets), CONFIDENCE_THRESHOLD)
 
@@ -281,6 +347,23 @@ async def _inspect_document_impl(
             }
         )
 
+    webhooks.dispatch(
+        "inspection.completed",
+        {
+            "report_id": report_id,
+            "document_name": file.filename,
+            "profile_id": profile_id,
+            "summary": {
+                "total_checks": report.total_checks,
+                "passed": report.passed,
+                "failed": report.failed,
+                "flagged_for_review": report.flagged_for_review,
+                "overall_status": report.overall_status,
+            },
+            "review_ticket_ids": [ticket["ticket_id"] for ticket in review_tickets],
+        },
+    )
+
     return InspectResponse(
         report_id=report_id,
         document_name=file.filename,
@@ -297,6 +380,75 @@ async def _inspect_document_impl(
         pdf_path=str(pdf_path) if pdf_path else None,
         review_tickets=review_tickets,
     )
+@app.post("/api/v1/cross-reference", response_model=CrossReferenceResponse, status_code=201)
+async def cross_reference_documents(
+    files: list[UploadFile] = File(...),
+    specification: str = Form(...),
+):
+    """Cross-reference exactly two selectable-text PDFs against a specification."""
+    if len(files) != 2:
+        raise HTTPException(status_code=422, detail="Exactly two PDF files are required.")
+
+    documents: list[dict[str, str]] = []
+    for file in files:
+        filename = Path(file.filename or "document.pdf").name
+        if not filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=422, detail="Only PDF files are accepted.")
+        content = await file.read()
+        upload_id = f"{uuid.uuid4().hex[:8]}_{filename}"
+        upload_path = UPLOADS_DIR / upload_id
+        upload_path.write_bytes(content)
+        try:
+            text = extract_text(upload_path, max_chars=50_000)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"PDF extraction failed for {filename}: {exc}")
+        if len(text.strip()) < 50:
+            raise HTTPException(status_code=422, detail=f"{filename} appears to be empty or image-only.")
+
+        doc_id = f"xref_{upload_id}"
+        rag.index_document(doc_id, text, metadata={"filename": filename, "cross_reference": "true"})
+        chunks = rag.retrieve(specification, top_k=5, doc_id=doc_id)
+        documents.append({
+            "name": filename,
+            "text": text,
+            "context": "\n\n".join(chunk["text"] for chunk in chunks),
+        })
+
+    report, error, metrics = ollama.run_cross_reference(documents, specification)
+    if error or report is None:
+        raise HTTPException(status_code=502, detail=f"Cross-reference inference failed: {error}")
+
+    report.document_names = [document["name"] for document in documents]
+    report = normalize_cross_reference_counts(report)
+    cross_reference_id = f"XRF-{uuid.uuid4().hex[:8].upper()}"
+    report_path = REPORTS_DIR / f"{cross_reference_id}.json"
+    report_path.write_text(report.model_dump_json(indent=2))
+    log_audit(
+        "cross_reference_completed",
+        cross_reference_id=cross_reference_id,
+        documents=report.document_names,
+        total_findings=report.total_findings,
+        failed=report.failed,
+        flagged=report.flagged_for_review,
+    )
+    webhooks.dispatch(
+        "cross_reference.completed",
+        {
+            "cross_reference_id": cross_reference_id,
+            "documents": report.document_names,
+            "total_findings": report.total_findings,
+            "failed": report.failed,
+            "flagged_for_review": report.flagged_for_review,
+            "overall_status": report.overall_status,
+        },
+    )
+    return CrossReferenceResponse(
+        cross_reference_id=cross_reference_id,
+        report=report,
+        metrics=metrics.model_dump() if metrics else None,
+    )
+
+
 @app.get("/api/v1/reports/{report_id}")
 async def get_report(report_id: str):
     path = REPORTS_DIR / f"{report_id}.json"
@@ -336,6 +488,17 @@ async def get_feedback_preferences():
 @app.post("/api/v1/reviews/{ticket_id}/resolve")
 async def resolve_ticket(ticket_id: str, resolution: dict):
     try:
-        return resolve_review_ticket(ticket_id, resolution)
+        result = resolve_review_ticket(ticket_id, resolution)
+        webhooks.dispatch(
+            "review.resolved",
+            {
+                "ticket_id": ticket_id,
+                "document_name": result.get("document_name"),
+                "profile_id": result.get("profile_id"),
+                "resolution": resolution,
+                "resolved_at": result.get("resolved_at"),
+            },
+        )
+        return result
     except FileNotFoundError:
         raise HTTPException(404, "Ticket not found.")

@@ -53,6 +53,10 @@ jobs:
           cd tests
           pytest -v --tb=short
 
+      - name: Run deterministic RAG evaluation gate
+        run: |
+          pytest tests/evals -q
+
   docker-build:
     runs-on: ubuntu-latest
     needs: test

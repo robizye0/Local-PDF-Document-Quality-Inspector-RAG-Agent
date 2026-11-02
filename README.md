@@ -134,7 +134,15 @@ Multiple inspection profiles with per-profile Pydantic schemas:
 - Resolving a review ticket preserves the audit record and appends a JSONL preference pair to `data/feedback/preference_pairs.jsonl`.
 - Feedback export API: `GET /api/v1/feedback/preferences`.
 
-### 10. Pluggable Inference Engines and Restricted Validators
+### 10. Webhooks, Cross-Document Validation, and Async Jobs
+
+- Configurable signed webhooks emit `inspection.completed`, `review.flagged`, `review.resolved`, and `cross_reference.completed` events.
+- Set `WEBHOOK_URL` and optional `WEBHOOK_SECRET` to enable delivery.
+- `POST /api/v1/cross-reference` accepts exactly two PDFs and returns structured `XRF-###` contradiction findings.
+- `POST /api/v1/jobs/inspect` returns HTTP 202 with a `JOB-...` ID; poll `GET /api/v1/jobs/{job_id}` for completion.
+- The local queue uses a bounded worker pool so development does not require Redis. The job API is intentionally compatible with a future Celery/Redis worker deployment.
+
+### 11. Pluggable Inference Engines and Restricted Validators
 
 Ollama remains the default. OpenAI-compatible servers such as vLLM can be selected without changing the inspection pipeline:
 
@@ -230,6 +238,18 @@ Upload PDF + specification + optional profile_id.
 }
 ```
 
+### POST /api/v1/jobs/inspect
+Queue an inspection and receive HTTP 202 with a `job_id`.
+
+### GET /api/v1/jobs/{job_id}
+Poll queued, running, completed, or failed inspection state.
+
+### POST /api/v1/cross-reference
+Upload exactly two PDFs plus a specification for cross-document contradiction analysis.
+
+### GET /api/v1/feedback/preferences
+Read the structured preference-pair feedback ledger.
+
 ### GET /api/v1/reports/{report_id}
 Download JSON report.
 
@@ -257,6 +277,10 @@ speccheck/
 │   ├── rule_profiles.py   # Dynamic schema/rule selection
 │   ├── audit_logger.py    # Structured JSON audit logging
 │   ├── report_exporter.py # PDF certificate generation
+│   ├── webhooks.py        # Signed event notifications
+│   ├── jobs.py            # Async job state + worker pool
+│   ├── cross_reference.py # Cross-document aggregation
+│   ├── evaluation.py      # CI-safe RAG evaluation metrics
 │   ├── tracing/
 │   │   └── langfuse_tracing.py  # Langfuse OpenTelemetry integration
 │   ├── rag/

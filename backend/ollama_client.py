@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 import requests
 from pydantic import BaseModel, ValidationError
 
-from schemas import EvidenceVerification, QualityInspectionReport
+from schemas import CrossReferenceReport, EvidenceVerification, QualityInspectionReport
 from rule_profiles import get_report_schema, InspectionProfile
 from evidence_verifier import select_verification_targets
 
@@ -213,6 +213,33 @@ class OllamaClient:
                     payload["options"]["temperature"] = max(0.0, payload["options"]["temperature"] - 0.05)
 
         return None, last_error or "Max retries exceeded", None
+
+    def run_cross_reference(
+        self,
+        documents: list[dict[str, str]],
+        specification: str,
+    ) -> tuple[CrossReferenceReport | None, str | None, InspectionMetrics | None]:
+        """Compare evidence from exactly two documents in one structured pass."""
+        schema_hint = _build_schema_hint_for_schema(CrossReferenceReport)
+        system = (
+            "You are a cross-document compliance auditor. Compare exactly two source documents "
+            "against the supplied specification. Identify matching requirements and contradictions. "
+            "Never invent missing evidence. Return STRICT JSON only matching this schema:\n\n"
+            f"{schema_hint}\n\n"
+            "Rules:\n"
+            "1. Use one XRF-### finding per material cross-document comparison.\n"
+            "2. Quote evidence separately from each document.\n"
+            "3. Use UNCERTAIN when either document lacks proof and set needs_human_review=true.\n"
+            "4. Status FAIL means the documents contradict the specification or each other."
+        )
+        sections = []
+        for index, document in enumerate(documents[:2], start=1):
+            sections.append(
+                f"## DOCUMENT {index}: {document['name']}\n"
+                f"{document.get('context', document.get('text', ''))[:10000]}"
+            )
+        user = f"## SPECIFICATION\n{specification}\n\n" + "\n\n".join(sections)
+        return self.generate_json(system, user, CrossReferenceReport, max_retries=2)
 
     def verify_evidence(
         self,

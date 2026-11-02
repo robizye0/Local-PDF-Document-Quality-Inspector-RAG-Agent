@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 from datetime import datetime
 
 import requests
@@ -59,6 +60,11 @@ with st.sidebar:
     except Exception:
         profile_id = None
         st.caption("Could not load profiles. Using default schema.")
+    use_async_jobs = st.checkbox(
+        "Use background job queue",
+        value=True,
+        help="Return immediately and poll the job status instead of holding the request open.",
+    )
 
 # ── Main UI ──────────────────────────────────────────────────────────────────
 col1, col2 = st.columns([1, 1])
@@ -81,23 +87,52 @@ run_btn = st.button("▶ Run Compliance Check", type="primary", use_container_wi
 
 # ── Results ──────────────────────────────────────────────────────────────────
 if run_btn and uploaded_file:
-    with st.spinner("Running compliance check via Ollama…"):
+    with st.spinner("Running compliance check via background worker…" if use_async_jobs else "Running compliance check via Ollama…"):
         files = {"file": (uploaded_file.name, uploaded_file, "application/pdf")}
         data = {
             "specification": specification,
             "profile_id": profile_id or "",
         }
         try:
-            resp = requests.post(
-                f"{api_url}/api/v1/inspect",
-                files=files,
-                data=data,
-                timeout=180,
-            )
-            resp.raise_for_status()
-            result = resp.json()
+            if use_async_jobs:
+                resp = requests.post(
+                    f"{api_url}/api/v1/jobs/inspect",
+                    files=files,
+                    data=data,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                job = resp.json()
+                job_id = job["job_id"]
+                progress = st.progress(0)
+                status_text = st.empty()
+                result = None
+                for attempt in range(180):
+                    job_response = requests.get(f"{api_url}/api/v1/jobs/{job_id}", timeout=10)
+                    job_response.raise_for_status()
+                    job = job_response.json()
+                    status_text.caption(f"Job {job_id}: {job['status']}")
+                    if job["status"] == "completed":
+                        result = job["result"]
+                        progress.progress(100)
+                        break
+                    if job["status"] == "failed":
+                        raise RuntimeError(job.get("error", "Background inspection failed."))
+                    progress.progress(min(95, int((attempt + 1) / 180 * 100)))
+                    time.sleep(1)
+                if result is None:
+                    raise TimeoutError(f"Job {job_id} did not finish within 180 seconds.")
+            else:
+                resp = requests.post(
+                    f"{api_url}/api/v1/inspect",
+                    files=files,
+                    data=data,
+                    timeout=180,
+                )
+                resp.raise_for_status()
+                result = resp.json()
             st.session_state["last_result"] = result
-        except requests.exceptions.RequestException as exc:
+        except (requests.exceptions.RequestException, RuntimeError, TimeoutError) as exc:
             st.error(f"Request failed: {exc}")
             st.stop()
 
@@ -165,7 +200,58 @@ if run_btn and uploaded_file:
                 mime="application/pdf",
             )
 
+# ── Cross-document validation ────────────────────────────────────────────────
+with st.expander("🔗 Cross-reference two PDFs", expanded=False):
+    cross_files = st.file_uploader(
+        "Upload a contract/specification pair",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="cross_reference_files",
+    )
+    cross_specification = st.text_area(
+        "Cross-reference requirement",
+        value="Verify that technical limits in the datasheet match the contractual performance and liability clauses.",
+        key="cross_reference_specification",
+    )
+    cross_run = st.button("▶ Compare documents", key="cross_reference_run")
+    if cross_run:
+        if len(cross_files or []) != 2:
+            st.error("Select exactly two PDF files.")
+        else:
+            with st.spinner("Cross-referencing both documents…"):
+                cross_payload = [
+                    ("files", (item.name, item.getvalue(), "application/pdf"))
+                    for item in cross_files
+                ]
+                try:
+                    cross_response = requests.post(
+                        f"{api_url}/api/v1/cross-reference",
+                        files=cross_payload,
+                        data={"specification": cross_specification},
+                        timeout=180,
+                    )
+                    cross_response.raise_for_status()
+                    cross_result = cross_response.json()
+                except requests.exceptions.RequestException as exc:
+                    st.error(f"Cross-reference failed: {exc}")
+                else:
+                    cross_report = cross_result["report"]
+                    st.write(
+                        f"**{cross_result['cross_reference_id']}** — {cross_report['overall_status']} — "
+                        f"{cross_report['failed']} contradictions"
+                    )
+                    for finding in cross_report.get("findings", []):
+                        label = f"{finding['finding_id']} — {finding['clause_reference']} — {finding['status']}"
+                        with st.expander(label, expanded=False):
+                            st.write(f"**Source:** {finding['source_document']}")
+                            st.write(f"**Target:** {finding['target_document']}")
+                            st.write(f"**Source evidence:** {finding.get('source_evidence', '')}")
+                            st.write(f"**Target evidence:** {finding.get('target_evidence', '')}")
+                            if finding.get("contradiction"):
+                                st.error(f"**Contradiction:** {finding['contradiction']}")
+
 # ── Review Queue ─────────────────────────────────────────────────────────────
+
 with st.expander("⚠ Human Review Queue", expanded=False):
     try:
         reviews = requests.get(f"{api_url}/api/v1/reviews", timeout=10).json()

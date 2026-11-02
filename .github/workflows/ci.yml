@@ -55,7 +55,6 @@ jobs:
 
       - name: Run pytest
         run: |
-          cd tests
           pytest -v --tb=short
 
       - name: Run deterministic RAG evaluation gate

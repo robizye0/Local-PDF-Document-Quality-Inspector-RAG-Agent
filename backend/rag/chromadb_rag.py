@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import chromadb
@@ -19,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 # Local embedding model (runs on CPU, ~100MB download)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "/app/data/chromadb")
+DEFAULT_CHROMA_PERSIST_DIR = Path(__file__).resolve().parents[2] / "data" / "chromadb"
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", str(DEFAULT_CHROMA_PERSIST_DIR))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "500"))  # characters
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 TOP_K = int(os.getenv("RAG_TOP_K", "5"))

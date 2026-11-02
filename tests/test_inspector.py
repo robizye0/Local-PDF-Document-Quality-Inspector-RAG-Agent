@@ -45,9 +45,49 @@ def test_repair_json_removes_trailing_comma():
     assert ",}" not in fixed
 
 
+def test_repair_json_normalizes_model_status_synonyms():
+    raw = '{"status": "FAILED", "overall_status": "PASSED"}'
+    fixed = _repair_json(raw)
+    assert '"status": "FAIL"' in fixed
+    assert '"overall_status": "PASS"' in fixed
+
+
 def test_repair_json_noop_on_clean():
     raw = '{"a": 1}'
     assert _repair_json(raw) == raw
+
+
+def test_retrieve_can_scope_to_document():
+    rag_mod = _load("rag_chromadb_scope", os.path.join("rag", "chromadb_rag.py"))
+
+    class FakeEmbeddingModel:
+        class Encoded:
+            def tolist(self):
+                return [[0.1]]
+
+        def encode(self, values):
+            return self.Encoded()
+
+    class FakeCollection:
+        def __init__(self):
+            self.query_kwargs = None
+
+        def query(self, **kwargs):
+            self.query_kwargs = kwargs
+            return {
+                "documents": [["current document chunk"]],
+                "metadatas": [[{"doc_id": "current-doc"}]],
+                "distances": [[0.1]],
+            }
+
+    rag = rag_mod.SemanticRAG.__new__(rag_mod.SemanticRAG)
+    rag.embedding_model = FakeEmbeddingModel()
+    rag.collection = FakeCollection()
+
+    results = rag.retrieve("invoice totals", top_k=1, doc_id="current-doc")
+
+    assert results[0]["metadata"]["doc_id"] == "current-doc"
+    assert rag.collection.query_kwargs["where"] == {"doc_id": "current-doc"}
 
 
 def test_inspection_metrics_defaults():

@@ -14,17 +14,45 @@ try:
     from langfuse import Langfuse
 except ImportError:
     Langfuse = None
+
 logger = logging.getLogger(__name__)
 
 # Initialize Langfuse client
 # Reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from env
-try:
-    langfuse_client = Langfuse()
-    LANGFUSE_ENABLED = True
-except Exception as exc:
-    logger.warning("Langfuse initialization failed: %s", exc)
-    langfuse_client = None
-    LANGFUSE_ENABLED = False
+langfuse_client = None
+LANGFUSE_ENABLED = False
+
+if Langfuse is not None:
+    try:
+        langfuse_client = Langfuse()
+        # Verify the client has the required methods
+        if hasattr(langfuse_client, "start_observation"):
+            LANGFUSE_ENABLED = True
+        else:
+            logger.warning("Langfuse client missing start_observation; tracing disabled.")
+    except Exception as exc:
+        logger.warning("Langfuse initialization failed: %s", exc)
+
+
+def _get_observation(name: str, as_type: str = "span", **kwargs):
+    """Create a Langfuse observation (span/trace) if enabled."""
+    if not LANGFUSE_ENABLED or langfuse_client is None:
+        return None
+    try:
+        # Langfuse v3+ removed the top-level ``tags`` argument from
+        # ``start_observation``. Preserve tags as metadata so tracing works
+        # across the supported client versions instead of failing silently.
+        tags = kwargs.pop("tags", None)
+        if tags:
+            metadata = kwargs.get("metadata")
+            if isinstance(metadata, dict):
+                kwargs["metadata"] = {**metadata, "tags": tags}
+            else:
+                kwargs["metadata"] = {"tags": tags}
+        return langfuse_client.start_observation(name=name, as_type=as_type, **kwargs)
+    except Exception as exc:
+        logger.warning("Langfuse observation creation failed: %s", exc)
+        return None
 
 
 def trace_ollama_call(operation_name: str = "ollama.generate"):
@@ -47,8 +75,9 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                 report, error, metrics = result if isinstance(result, tuple) else (result, None, None)
 
                 # Create trace span
-                span = langfuse_client.span(
+                span = _get_observation(
                     name=operation_name,
+                    as_type="span",
                     input={
                         "args_count": len(args),
                         "kwargs_keys": list(kwargs.keys()),
@@ -59,8 +88,11 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                     },
                 )
 
+                if span is None:
+                    return result
+
                 if error:
-                    span.end(
+                    span.update(
                         output={"error": str(error)},
                         metadata={"status": "error", "latency_ms": round(elapsed_ms, 2)},
                         level="ERROR",
@@ -77,20 +109,23 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                             "tokens_per_second": metrics.tokens_per_second,
                             "model_version": metrics.model_version,
                         })
-                    span.end(output=output_data)
+                    span.update(output=output_data)
 
+                span.end()
                 langfuse_client.flush()
                 return result
 
             except Exception as exc:
                 elapsed_ms = (time.perf_counter() - start) * 1000
-                if LANGFUSE_ENABLED and langfuse_client is not None:
-                    span = langfuse_client.span(
-                        name=f"{operation_name}.error",
-                        metadata={"status": "exception", "latency_ms": round(elapsed_ms, 2)},
-                        level="ERROR",
-                    )
-                    span.end(output={"error": str(exc)})
+                span = _get_observation(
+                    name=f"{operation_name}.error",
+                    as_type="span",
+                    metadata={"status": "exception", "latency_ms": round(elapsed_ms, 2)},
+                    level="ERROR",
+                )
+                if span is not None:
+                    span.update(output={"error": str(exc)})
+                    span.end()
                     langfuse_client.flush()
                 raise
 
@@ -106,17 +141,18 @@ def trace_inspection_pipeline(document_name: str, profile_id: str | None = None)
     if not LANGFUSE_ENABLED or langfuse_client is None:
         return None
 
-    trace = langfuse_client.trace(
+    trace = _get_observation(
         name="inspection.pipeline",
+        as_type="trace",
         input={
             "document_name": document_name,
             "profile_id": profile_id,
         },
-        tags=["inspection", "compliance"],
         metadata={
             "service": "speccheck-backend",
             "component": "fastapi",
         },
+        tags=["inspection", "compliance"],
     )
     return trace
 
@@ -126,15 +162,18 @@ def trace_pdf_extraction(file_path: str, pages: int, chars_extracted: int):
     if not LANGFUSE_ENABLED or langfuse_client is None:
         return
 
-    span = langfuse_client.span(
+    span = _get_observation(
         name="pdf.extraction",
+        as_type="span",
         input={"file_path": file_path},
         output={
             "pages": pages,
             "chars_extracted": chars_extracted,
         },
     )
-    langfuse_client.flush()
+    if span is not None:
+        span.end()
+        langfuse_client.flush()
 
 
 def trace_review_routing(ticket_count: int, confidence_threshold: float):
@@ -142,12 +181,15 @@ def trace_review_routing(ticket_count: int, confidence_threshold: float):
     if not LANGFUSE_ENABLED or langfuse_client is None:
         return
 
-    span = langfuse_client.span(
+    span = _get_observation(
         name="review.routing",
+        as_type="span",
         output={
             "tickets_created": ticket_count,
             "confidence_threshold": confidence_threshold,
         },
         tags=["human-in-the-loop"],
     )
-    langfuse_client.flush()
+    if span is not None:
+        span.end()
+        langfuse_client.flush()

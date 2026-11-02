@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from schemas import ComplianceCheck
+from feedback import PREFERENCE_PAIRS_PATH, append_preference_pair
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +29,22 @@ class ReviewTicket:
     reason: str
     created_at: str
     status: str = "open"
+    profile_id: str | None = None
 
     @staticmethod
-    def from_check(check: ComplianceCheck, document_name: str, reason: str) -> "ReviewTicket":
+    def from_check(
+        check: ComplianceCheck,
+        document_name: str,
+        reason: str,
+        profile_id: str | None = None,
+    ) -> "ReviewTicket":
         return ReviewTicket(
             ticket_id=f"REV-{uuid.uuid4().hex[:8].upper()}",
             check=check.model_dump(),
             document_name=document_name,
             reason=reason,
             created_at=datetime.now(timezone.utc).isoformat(),
+            profile_id=profile_id,
         )
 
     def save(self) -> Path:
@@ -46,10 +54,31 @@ class ReviewTicket:
         return path
 
 
-def enqueue_review(check: ComplianceCheck, document_name: str, reason: str) -> ReviewTicket:
-    ticket = ReviewTicket.from_check(check, document_name, reason)
+def enqueue_review(
+    check: ComplianceCheck,
+    document_name: str,
+    reason: str,
+    profile_id: str | None = None,
+) -> ReviewTicket:
+    ticket = ReviewTicket.from_check(check, document_name, reason, profile_id=profile_id)
     ticket.save()
     return ticket
+
+
+def resolve_review_ticket(ticket_id: str, resolution: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a ticket and append its human correction to the feedback ledger."""
+    path = REVIEW_DIR / f"{ticket_id}.json"
+    if not path.exists():
+        raise FileNotFoundError(ticket_id)
+    data = json.loads(path.read_text())
+    was_open = data.get("status") == "open"
+    data["status"] = "resolved"
+    data["resolution"] = resolution
+    data["resolved_at"] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    if was_open:
+        append_preference_pair(data, resolution, PREFERENCE_PAIRS_PATH)
+    return data
 
 
 def list_open_tickets() -> list[dict]:

@@ -126,6 +126,40 @@ Multiple inspection profiles with per-profile Pydantic schemas:
 - Structured JSON audit log: `logs/audit.log`
 - PDF Certificate of Inspection via ReportLab
 
+### 9. Deterministic Validation, Bounded Verification, and Feedback
+
+- Report totals and `overall_status` are recomputed from individual checks.
+- Commercial invoices use deterministic field and tax arithmetic validation; the LLM cannot override a proven arithmetic result.
+- Risky checks receive at most one bounded evidence-verifier pass over the source document.
+- Resolving a review ticket preserves the audit record and appends a JSONL preference pair to `data/feedback/preference_pairs.jsonl`.
+- Feedback export API: `GET /api/v1/feedback/preferences`.
+
+### 10. Pluggable Inference Engines and Restricted Validators
+
+Ollama remains the default. OpenAI-compatible servers such as vLLM can be selected without changing the inspection pipeline:
+
+```bash
+INFERENCE_PROVIDER=openai-compatible
+INFERENCE_BASE_URL=http://127.0.0.1:8001/v1
+OLLAMA_MODEL=Qwen/Qwen2.5-7B-Instruct
+```
+
+The invoice validator runs in an application-owned restricted subprocess. It does not execute LLM-generated code and is not a replacement for Firecracker/E2B isolation.
+
+---
+
+## Advanced Reliability Pipeline
+
+```text
+PDF extraction
+  -> document-scoped RAG
+  -> structured local inference
+  -> deterministic validators
+  -> bounded evidence verification
+  -> human review queue
+  -> preference-pair feedback ledger
+```
+
 ---
 
 ## Quick Start
@@ -148,7 +182,7 @@ Then open:
 
 ```bash
 # 1. Start Ollama
-ollama pull llama3.1:8b-instruct-q4_K_M
+ollama pull qwen2.5:7b
 ollama serve
 
 # 2. Backend

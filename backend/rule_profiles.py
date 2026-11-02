@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "data" / "profiles"
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -28,6 +28,14 @@ class PcbCheckResult(BaseModel):
     needs_human_review: bool = False
     review_reason: str = ""
 
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value.upper() not in ("PASS", "FAIL"):
+            raise ValueError("status must be PASS or FAIL")
+        return value.upper()
+
+
 class PcbInspectionReport(BaseModel):
     document_name: str
     total_checks: int
@@ -36,6 +44,13 @@ class PcbInspectionReport(BaseModel):
     flagged_for_review: int
     overall_status: str
     checks: list[PcbCheckResult]
+
+    @field_validator("overall_status")
+    @classmethod
+    def validate_overall(cls, value: str) -> str:
+        if value.upper() not in ("PASS", "FAIL"):
+            raise ValueError("overall_status must be PASS or FAIL")
+        return value.upper()
 
 
 class IsoCheckResult(BaseModel):
@@ -50,6 +65,14 @@ class IsoCheckResult(BaseModel):
     needs_human_review: bool = False
     review_reason: str = ""
 
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value.upper() not in ("PASS", "FAIL"):
+            raise ValueError("status must be PASS or FAIL")
+        return value.upper()
+
+
 class IsoInspectionReport(BaseModel):
     document_name: str
     total_checks: int
@@ -58,6 +81,13 @@ class IsoInspectionReport(BaseModel):
     flagged_for_review: int
     overall_status: str
     checks: list[IsoCheckResult]
+
+    @field_validator("overall_status")
+    @classmethod
+    def validate_overall(cls, value: str) -> str:
+        if value.upper() not in ("PASS", "FAIL"):
+            raise ValueError("overall_status must be PASS or FAIL")
+        return value.upper()
 
 
 class InvoiceCheckResult(BaseModel):
@@ -72,6 +102,14 @@ class InvoiceCheckResult(BaseModel):
     needs_human_review: bool = False
     review_reason: str = ""
 
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value.upper() not in ("PASS", "FAIL"):
+            raise ValueError("status must be PASS or FAIL")
+        return value.upper()
+
+
 class InvoiceInspectionReport(BaseModel):
     document_name: str
     total_checks: int
@@ -80,6 +118,13 @@ class InvoiceInspectionReport(BaseModel):
     flagged_for_review: int
     overall_status: str
     checks: list[InvoiceCheckResult]
+
+    @field_validator("overall_status")
+    @classmethod
+    def validate_overall(cls, value: str) -> str:
+        if value.upper() not in ("PASS", "FAIL"):
+            raise ValueError("overall_status must be PASS or FAIL")
+        return value.upper()
 
 
 # Profile registry -----------------------------------------------------------

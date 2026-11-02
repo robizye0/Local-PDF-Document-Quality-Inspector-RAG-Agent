@@ -5,7 +5,7 @@ Pydantic schemas for the inspection pipeline.
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,6 +53,18 @@ class QualityInspectionReport(BaseModel):
         if value.upper() not in ("PASS", "FAIL"):
             raise ValueError("overall_status must be PASS or FAIL")
         return value.upper()
+
+class EvidenceDecision(BaseModel):
+    check_id: str = Field(pattern=r"^CHK-\d{3}$")
+    verdict: Literal["PASS", "FAIL", "UNCERTAIN"]
+    evidence: str = Field(default="", max_length=1000)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    reason: str = Field(default="", max_length=500)
+
+
+class EvidenceVerification(BaseModel):
+    decisions: list[EvidenceDecision] = Field(default_factory=list, max_length=3)
+
 
 ComplianceCheck.model_rebuild()
 QualityInspectionReport.model_rebuild()

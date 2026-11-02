@@ -129,13 +129,14 @@ if run_btn and uploaded_file:
         report_data = requests.get(f"{api_url}/api/v1/reports/{result['report_id']}", timeout=10).json()
         checks = report_data.get("checks", [])
         for check in checks:
-            status_class = "badge-pass" if check["status"] == "PASS" else "badge-fail"
-            review_badge = '<span class="badge-review">⚠ Review</span>' if check.get("needs_human_review") else ""
-            with st.expander(
-                f"{check['check_id']} — {check['clause_reference']} "
-                f"<span class='{status_class}'>{check['status']}</span> {review_badge}",
-                expanded=False,
-            ):
+            status_label = f"{check['check_id']} — {check['clause_reference']} — {check['status']}"
+            with st.expander(status_label, expanded=False):
+                if check["status"] == "PASS":
+                    st.success("PASS")
+                else:
+                    st.error("FAIL")
+                if check.get("needs_human_review"):
+                    st.warning("⚠ Review required")
                 st.write(f"**Requirement:** {check['requirement']}")
                 st.write(f"**Severity:** {check['severity_level']}/5")
                 st.write(f"**Confidence:** {check['confidence_score']:.0%}")

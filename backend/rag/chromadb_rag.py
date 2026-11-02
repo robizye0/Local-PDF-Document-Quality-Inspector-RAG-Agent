@@ -120,6 +120,7 @@ class SemanticRAG:
         query: str,
         top_k: int = TOP_K,
         profile_id: str | None = None,
+        doc_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Retrieve the most relevant chunks for a query.
@@ -136,11 +137,15 @@ class SemanticRAG:
                 pass
 
         query_embedding = self.embedding_model.encode([enhanced_query]).tolist()
-        results = self.collection.query(
-            query_embeddings=query_embedding,
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-        )
+        query_kwargs = {
+            "query_embeddings": query_embedding,
+            "n_results": top_k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if doc_id:
+            query_kwargs["where"] = {"doc_id": doc_id}
+
+        results = self.collection.query(**query_kwargs)
 
         retrieved = []
         if results["documents"] and results["documents"][0]:

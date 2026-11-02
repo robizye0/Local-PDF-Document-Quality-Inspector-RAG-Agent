@@ -1,0 +1,2 @@
+# Optional durable job backend
+celery[redis]>=5.4,<6

@@ -18,6 +18,14 @@ class SeverityLevel(IntEnum):
     LEVEL_5 = 5
 
 
+class EvidenceCitation(BaseModel):
+    """Traceable source location attached to a generated compliance check."""
+
+    chunk_id: str
+    page: int | None = Field(default=None, ge=1)
+    quote: str = Field(max_length=500)
+
+
 class ComplianceCheck(BaseModel):
     check_id: str = Field(pattern=r"^CHK-\d{3}$")
     clause_reference: str
@@ -29,6 +37,9 @@ class ComplianceCheck(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     needs_human_review: bool = False
     review_reason: str = Field(default="", max_length=500)
+    evidence_citations: list[EvidenceCitation] = Field(
+        default_factory=list, max_length=3
+    )
 
     @field_validator("status")
     @classmethod
@@ -79,6 +90,9 @@ class CrossReferenceFinding(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     needs_human_review: bool = False
     review_reason: str = Field(default="", max_length=500)
+    evidence_citations: list[EvidenceCitation] = Field(
+        default_factory=list, max_length=3
+    )
 
 
 class CrossReferenceReport(BaseModel):

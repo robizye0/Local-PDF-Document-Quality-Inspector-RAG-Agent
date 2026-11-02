@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "llama3.1:8b-instruct-q4_K_M"
+DEFAULT_MODEL = "qwen2.5:7b"
 
 
 class InspectionMetrics(BaseModel):

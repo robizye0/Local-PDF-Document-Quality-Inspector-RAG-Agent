@@ -1,0 +1,32 @@
+{
+  "name": "speccheck-rag-smoke-benchmark",
+  "version": "1.0",
+  "thresholds": {
+    "faithfulness": 0.85,
+    "context_recall": 0.80,
+    "overall": 0.80
+  },
+  "cases": [
+    {
+      "id": "invoice-voltage",
+      "query": "invoice voltage requirement",
+      "contexts": ["Input voltage: 240V AC. Invoice total: 100 EUR."],
+      "expected_terms": ["240V AC", "invoice total"],
+      "answer": "The input voltage is 240V AC. The invoice total is 100 EUR."
+    },
+    {
+      "id": "rohs-materials",
+      "query": "materials compliance",
+      "contexts": ["Materials are RoHS compliant and contain no lead Pb."],
+      "expected_terms": ["RoHS compliant", "lead Pb"],
+      "answer": "The materials are RoHS compliant and contain no lead Pb."
+    },
+    {
+      "id": "revision-history",
+      "query": "document revision history",
+      "contexts": ["Revision history: version v1 released 2024-01-01."],
+      "expected_terms": ["revision history", "version v1"],
+      "answer": "The document includes revision history and version v1."
+    }
+  ]
+}

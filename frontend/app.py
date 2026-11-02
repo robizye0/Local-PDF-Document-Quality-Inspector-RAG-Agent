@@ -13,6 +13,8 @@ import requests
 import streamlit as st
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+API_KEY = os.getenv("SPECCHECK_API_KEY", os.getenv("API_KEY", "")).strip()
+API_HEADERS = {"X-API-Key": API_KEY} if API_KEY else {}
 
 st.set_page_config(
     page_title="SpecCheck — PDF Compliance Checker",
@@ -52,7 +54,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Inspection Profile")
     try:
-        profiles = requests.get(f"{api_url}/api/v1/profiles", timeout=5).json()
+        profiles = requests.get(f"{api_url}/api/v1/profiles", headers=API_HEADERS, timeout=5).json()
         profile_options = {p["name"]: p["profile_id"] for p in profiles}
         selected_name = st.selectbox("Select profile", list(profile_options.keys()))
         profile_id = profile_options[selected_name]
@@ -99,6 +101,7 @@ if run_btn and uploaded_file:
                     f"{api_url}/api/v1/jobs/inspect",
                     files=files,
                     data=data,
+                    headers=API_HEADERS,
                     timeout=30,
                 )
                 resp.raise_for_status()
@@ -108,7 +111,9 @@ if run_btn and uploaded_file:
                 status_text = st.empty()
                 result = None
                 for attempt in range(180):
-                    job_response = requests.get(f"{api_url}/api/v1/jobs/{job_id}", timeout=10)
+                    job_response = requests.get(
+                        f"{api_url}/api/v1/jobs/{job_id}", headers=API_HEADERS, timeout=10
+                    )
                     job_response.raise_for_status()
                     job = job_response.json()
                     status_text.caption(f"Job {job_id}: {job['status']}")
@@ -127,6 +132,7 @@ if run_btn and uploaded_file:
                     f"{api_url}/api/v1/inspect",
                     files=files,
                     data=data,
+                    headers=API_HEADERS,
                     timeout=180,
                 )
                 resp.raise_for_status()
@@ -161,7 +167,11 @@ if run_btn and uploaded_file:
     # Check details table
     st.subheader("Check Details")
     try:
-        report_data = requests.get(f"{api_url}/api/v1/reports/{result['report_id']}", timeout=10).json()
+        report_data = requests.get(
+            f"{api_url}/api/v1/reports/{result['report_id']}",
+            headers=API_HEADERS,
+            timeout=10,
+        ).json()
         checks = report_data.get("checks", [])
         for check in checks:
             status_label = f"{check['check_id']} — {check['clause_reference']} — {check['status']}"
@@ -179,6 +189,12 @@ if run_btn and uploaded_file:
                     st.error(f"**Deviation:** {check['deviation_found']}")
                 if check.get("recommended_fix"):
                     st.info(f"**Fix:** {check['recommended_fix']}")
+                for citation in check.get("evidence_citations", []):
+                    page = f"page {citation['page']}" if citation.get("page") else "page unknown"
+                    st.caption(
+                        f"📌 Evidence ({page}, chunk `{citation['chunk_id']}`): "
+                        f"{citation['quote']}"
+                    )
     except Exception as exc:
         st.warning(f"Could not load check details: {exc}")
 
@@ -228,6 +244,7 @@ with st.expander("🔗 Cross-reference two PDFs", expanded=False):
                         f"{api_url}/api/v1/cross-reference",
                         files=cross_payload,
                         data={"specification": cross_specification},
+                        headers=API_HEADERS,
                         timeout=180,
                     )
                     cross_response.raise_for_status()
@@ -254,7 +271,9 @@ with st.expander("🔗 Cross-reference two PDFs", expanded=False):
 
 with st.expander("⚠ Human Review Queue", expanded=False):
     try:
-        reviews = requests.get(f"{api_url}/api/v1/reviews", timeout=10).json()
+        reviews = requests.get(
+            f"{api_url}/api/v1/reviews", headers=API_HEADERS, timeout=10
+        ).json()
         if not reviews:
             st.caption("No open review tickets.")
         for ticket in reviews:

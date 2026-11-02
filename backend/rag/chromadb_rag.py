@@ -104,15 +104,22 @@ class SemanticRAG:
         # Prepare data
         embeddings = self.embedding_model.encode(chunks).tolist()
         ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
-        metadatas = [
-            {
-                "doc_id": doc_id,
-                "chunk_index": i,
-                "chunk_length": len(chunk),
-                **(metadata or {}),
-            }
-            for i, chunk in enumerate(chunks)
-        ]
+        metadatas = []
+        search_start = 0
+        for i, chunk in enumerate(chunks):
+            chunk_start = text.find(chunk, search_start)
+            if chunk_start < 0:
+                chunk_start = search_start
+            search_start = chunk_start + max(1, len(chunk) - CHUNK_OVERLAP)
+            metadatas.append(
+                {
+                    "doc_id": doc_id,
+                    "chunk_index": i,
+                    "chunk_length": len(chunk),
+                    "page_number": text[:chunk_start].count("\f") + 1,
+                    **(metadata or {}),
+                }
+            )
 
         self.collection.add(
             documents=chunks,
@@ -160,6 +167,11 @@ class SemanticRAG:
             for i, doc in enumerate(results["documents"][0]):
                 retrieved.append(
                     {
+                        "chunk_id": (
+                            results["ids"][0][i]
+                            if results.get("ids") and results["ids"][0]
+                            else "unknown"
+                        ),
                         "text": doc,
                         "metadata": (
                             results["metadatas"][0][i] if results["metadatas"] else {}

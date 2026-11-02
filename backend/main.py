@@ -15,39 +15,56 @@ from tempfile import SpooledTemporaryFile
 from typing import Any
 
 from audit_logger import log_audit
+from citations import attach_evidence_citations
 from cross_reference import normalize_cross_reference_counts
+from demo_mode import DemoInference, DemoRAG
 from evidence_verifier import apply_verification_decisions
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from feedback import PREFERENCE_PAIRS_PATH
 from invoice_validator import InvoiceValidation, reconcile_invoice_report
 from jobs import job_manager
+from observability import RequestMetrics, new_request_id
 from ollama_client import OllamaClient
 from pdf_reader import extract_text
 from pydantic import BaseModel
 from rag.chromadb_rag import SemanticRAG
 from report_consistency import normalize_report_counts
 from report_exporter import export_report_pdf
+from retention import cleanup_expired_files, delete_upload
 from review_queue import enqueue_review, list_open_tickets, resolve_review_ticket
 from rule_profiles import get_profile, list_profiles
 from sandbox_validator import SandboxValidationError, run_invoice_validation
 from schemas import CrossReferenceReport
+from security import RateLimiter, api_key_is_valid
 from tracing.langfuse_tracing import (
     trace_inspection_pipeline,
     trace_pdf_extraction,
     trace_review_routing,
 )
+from upload_security import MAX_UPLOAD_BYTES, validate_pdf_upload
 from webhooks import WebhookDispatcher
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 INFERENCE_PROVIDER = os.getenv("INFERENCE_PROVIDER", "ollama").lower()
 INFERENCE_BASE_URL = os.getenv(
     "INFERENCE_BASE_URL",
     OLLAMA_URL if INFERENCE_PROVIDER == "ollama" else "http://localhost:8001/v1",
 )
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.85"))
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes"}
+RETENTION_HOURS = float(os.getenv("UPLOAD_RETENTION_HOURS", "24"))
+API_KEY = os.getenv("SPECCHECK_API_KEY", os.getenv("API_KEY", "")).strip()
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501"
+    ).split(",")
+    if origin.strip()
+]
 REPORTS_DIR = Path(__file__).resolve().parent.parent / "data" / "reports"
 UPLOADS_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
 for d in (REPORTS_DIR, UPLOADS_DIR):
@@ -63,18 +80,71 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=bool(CORS_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-ollama = OllamaClient(
-    base_url=INFERENCE_BASE_URL,
-    model=OLLAMA_MODEL,
-    provider=INFERENCE_PROVIDER,
-)
-rag = SemanticRAG()
+rate_limiter = RateLimiter(RATE_LIMIT_PER_MINUTE)
+request_metrics = RequestMetrics()
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", new_request_id())
+    started = request_metrics.timer()
+    response = await call_next(request)
+    request_metrics.record(
+        request.method,
+        request.url.path,
+        response.status_code,
+        (request_metrics.timer() - started) * 1000,
+    )
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@app.on_event("startup")
+async def cleanup_expired_uploads() -> None:
+    removed = cleanup_expired_files(UPLOADS_DIR, RETENTION_HOURS * 3600)
+    if removed:
+        logger.info("Removed %d expired upload(s)", removed)
+
+
+@app.middleware("http")
+async def api_security_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        supplied_key = request.headers.get("X-API-Key")
+        if not api_key_is_valid(API_KEY, supplied_key):
+            return JSONResponse(status_code=401, content={"detail": "Invalid API key."})
+        client_host = request.client.host if request.client else "unknown"
+        if not rate_limiter.allow(client_host):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded."},
+                headers={"Retry-After": "60"},
+            )
+    return await call_next(request)
+
+
+@app.get("/metrics")
+async def metrics():
+    return request_metrics.snapshot()
+
+
+if DEMO_MODE:
+    ollama: Any = DemoInference()
+    rag: Any = DemoRAG()
+else:
+    ollama = OllamaClient(
+        base_url=INFERENCE_BASE_URL,
+        model=OLLAMA_MODEL,
+        provider=INFERENCE_PROVIDER,
+    )
+    rag = SemanticRAG()
 webhooks = WebhookDispatcher()
 
 
@@ -90,6 +160,7 @@ class HealthResponse(BaseModel):
 class InspectResponse(BaseModel):
     report_id: str
     document_name: str
+    upload_id: str | None = None
     profile_id: str | None
     summary: dict[str, Any]
     metrics: dict[str, Any] | None = None
@@ -118,9 +189,9 @@ async def health():
     return HealthResponse(
         status="ok" if model_pulled else "degraded",
         ollama_reachable=model_pulled,
-        model=OLLAMA_MODEL,
+        model="demo-deterministic" if DEMO_MODE else OLLAMA_MODEL,
         model_pulled=model_pulled,
-        inference_provider=INFERENCE_PROVIDER,
+        inference_provider="demo" if DEMO_MODE else INFERENCE_PROVIDER,
         rag_stats=rag_stats,
     )
 
@@ -139,13 +210,15 @@ async def submit_inspection_job(
     profile_id: str | None = Form(None),
 ):
     """Queue an inspection and return immediately with a pollable job ID."""
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=422, detail="Only PDF files are accepted.")
-    content = await file.read()
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    try:
+        upload = validate_pdf_upload(file.filename, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     job_id = job_manager.submit(
         _run_inspection_job,
-        Path(file.filename).name,
-        content,
+        upload.filename,
+        upload.content,
         specification,
         profile_id,
     )
@@ -158,6 +231,12 @@ async def get_inspection_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job
+
+
+@app.delete("/api/v1/uploads/{upload_id}", status_code=204)
+async def delete_uploaded_document(upload_id: str) -> None:
+    if not delete_upload(UPLOADS_DIR, upload_id):
+        raise HTTPException(status_code=404, detail="Upload not found.")
 
 
 @app.post("/api/v1/inspect", response_model=InspectResponse, status_code=201)
@@ -203,8 +282,12 @@ async def _inspect_document_impl(
     specification: str,
     profile_id: str | None = None,
 ) -> InspectResponse:
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=422, detail="Only PDF files are accepted.")
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    try:
+        upload = validate_pdf_upload(file.filename, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    filename = upload.filename
 
     profile = None
     if profile_id:
@@ -214,12 +297,11 @@ async def _inspect_document_impl(
             raise HTTPException(status_code=422, detail=str(exc))
 
     # Start Langfuse trace
-    trace = trace_inspection_pipeline(file.filename, profile_id)
+    trace = trace_inspection_pipeline(filename, profile_id)
 
     # Save upload
-    upload_id = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    upload_id = f"{uuid.uuid4().hex[:8]}_{filename}"
     upload_path = UPLOADS_DIR / upload_id
-    content = await file.read()
     upload_path.write_bytes(content)
     logger.info("Uploaded %s (%d bytes)", upload_id, len(content))
 
@@ -240,7 +322,7 @@ async def _inspect_document_impl(
     rag.index_document(
         doc_id,
         doc_text,
-        metadata={"filename": file.filename, "profile_id": profile_id or "default"},
+        metadata={"filename": filename, "profile_id": profile_id or "default"},
     )
 
     # Retrieve relevant chunks using semantic search
@@ -268,7 +350,7 @@ async def _inspect_document_impl(
         detail = error or "Inference returned no report."
         log_audit(
             "inspection_failed",
-            document=file.filename,
+            document=filename,
             profile=profile_id,
             error=detail,
         )
@@ -279,7 +361,7 @@ async def _inspect_document_impl(
         )
 
     # The uploaded filename is authoritative; never trust the model to name the document.
-    report.document_name = file.filename
+    report.document_name = filename
     if profile_id == "commercial-invoice":
         try:
             validation_payload = run_invoice_validation(doc_text)
@@ -293,6 +375,7 @@ async def _inspect_document_impl(
         report = reconcile_invoice_report(report, doc_text, validation=validation)
     else:
         report = normalize_report_counts(report)
+    report = attach_evidence_citations(report, retrieved_chunks)
 
     # Run one bounded second-pass verifier only for risky or ambiguous checks.
     verification, verification_error, _verification_metrics = ollama.verify_evidence(
@@ -311,7 +394,7 @@ async def _inspect_document_impl(
     for check in report.checks:
         if check.needs_human_review:
             ticket = enqueue_review(
-                check, file.filename, check.review_reason, profile_id=profile_id
+                check, filename, check.review_reason, profile_id=profile_id
             )
             review_tickets.append(
                 {
@@ -324,7 +407,7 @@ async def _inspect_document_impl(
                 "review.flagged",
                 {
                     "ticket_id": ticket.ticket_id,
-                    "document_name": file.filename,
+                    "document_name": filename,
                     "profile_id": profile_id,
                     "check": check.model_dump(),
                     "reason": check.review_reason,
@@ -350,7 +433,7 @@ async def _inspect_document_impl(
     log_audit(
         "inspection_completed",
         report_id=report_id,
-        document=file.filename,
+        document=filename,
         profile=profile_id,
         total_checks=report.total_checks,
         passed=report.passed,
@@ -378,7 +461,7 @@ async def _inspect_document_impl(
         "inspection.completed",
         {
             "report_id": report_id,
-            "document_name": file.filename,
+            "document_name": filename,
             "profile_id": profile_id,
             "summary": {
                 "total_checks": report.total_checks,
@@ -393,7 +476,8 @@ async def _inspect_document_impl(
 
     return InspectResponse(
         report_id=report_id,
-        document_name=file.filename,
+        document_name=filename,
+        upload_id=upload_id,
         profile_id=profile_id,
         summary={
             "total_checks": report.total_checks,
@@ -424,10 +508,12 @@ async def cross_reference_documents(
 
     documents: list[dict[str, str]] = []
     for file in files:
-        filename = Path(file.filename or "document.pdf").name
-        if not filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=422, detail="Only PDF files are accepted.")
-        content = await file.read()
+        content = await file.read(MAX_UPLOAD_BYTES + 1)
+        try:
+            upload = validate_pdf_upload(file.filename, content)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        filename = upload.filename
         upload_id = f"{uuid.uuid4().hex[:8]}_{filename}"
         upload_path = UPLOADS_DIR / upload_id
         upload_path.write_bytes(content)

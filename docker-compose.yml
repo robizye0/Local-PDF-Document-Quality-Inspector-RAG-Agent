@@ -12,17 +12,23 @@ services:
       - ./logs:/app/logs
     environment:
       - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL=llama3.1:8b-instruct-q4_K_M
-      - CONFIDENCE_THRESHOLD=0.85
-      - LANGFUSE_PUBLIC_KEY=pk-lf-xxxx
-      - LANGFUSE_SECRET_KEY=sk-lf-xxxx
-      - LANGFUSE_HOST=http://langfuse:3000
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - CONFIDENCE_THRESHOLD=${CONFIDENCE_THRESHOLD:-0.85}
+      - DEMO_MODE=${DEMO_MODE:-false}
+      - SPECCHECK_API_KEY=${SPECCHECK_API_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8501}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-120}
+      - UPLOAD_RETENTION_HOURS=${UPLOAD_RETENTION_HOURS:-24}
+      - JOB_BACKEND=${JOB_BACKEND:-thread}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://langfuse:3000}
       - EMBEDDING_MODEL=all-MiniLM-L6-v2
       - CHROMA_PERSIST_DIR=/app/data/chromadb
     depends_on:
       ollama:
-        condition: service_healthy
-      langfuse:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -39,6 +45,7 @@ services:
       - "8501:8501"
     environment:
       - API_URL=http://api:8000
+      - SPECCHECK_API_KEY=${SPECCHECK_API_KEY:-}
     depends_on:
       api:
         condition: service_healthy
@@ -59,12 +66,24 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redis:
+    profiles: ["durable-jobs"]
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+
   langfuse:
+    profiles: ["observability"]
     image: langfuse/langfuse:latest
     ports:
       - "3000:3000"
     environment:
-      - NEXTAUTH_SECRET=your-secret-here
+      # Supply NEXTAUTH_SECRET through the environment when enabling this profile.
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - NEXTAUTH_URL=http://localhost:3000
     volumes:
       - langfuse-data:/app/data
@@ -77,4 +96,5 @@ services:
 
 volumes:
   ollama-data:
+  redis-data:
   langfuse-data:

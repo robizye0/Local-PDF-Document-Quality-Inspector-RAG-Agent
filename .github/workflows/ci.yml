@@ -88,3 +88,30 @@ jobs:
           file: ./frontend/Dockerfile
           push: false
           tags: speccheck-frontend:ci
+
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install security scanners
+        run: pip install -r backend/requirements.txt pip-audit bandit
+
+      - name: Audit Python dependencies
+        continue-on-error: true
+        run: pip-audit -r backend/requirements.txt
+
+      - name: Run Bandit static analysis
+        continue-on-error: true
+        run: bandit -r backend -x backend/__pycache__ -ll
+
+      - name: Check for common credential patterns
+        run: |
+          ! git grep -n -I -E 'ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY-----|sk-[A-Za-z0-9]{20,}' -- . ':!*.lock'

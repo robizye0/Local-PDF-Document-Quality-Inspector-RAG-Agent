@@ -14,6 +14,8 @@ data/reviews/*
 !data/reviews/.gitkeep
 data/chromadb/*
 !data/chromadb/.gitkeep
+data/webhooks/*
+!data/webhooks/.gitkeep
 logs/*
 !logs/.gitkeep
 .pytest_cache/

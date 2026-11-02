@@ -14,9 +14,9 @@ fi
 echo "✅ Docker found"
 
 # Check for required model in Ollama
-if ! docker compose exec -T ollama ollama list 2>/dev/null | grep -q "llama3.1:8b-instruct-q4_K_M"; then
-    echo "📦 Pulling llama3.1:8b-instruct-q4_K_M (first run only, ~4.7 GB)..."
-    docker compose exec ollama ollama pull llama3.1:8b-instruct-q4_K_M
+if ! docker compose exec -T ollama ollama list 2>/dev/null | grep -q "qwen2.5:7b"; then
+    echo "📦 Pulling qwen2.5:7b (first run only)..."
+    docker compose exec ollama ollama pull qwen2.5:7b
 else
     echo "✅ Model already present"
 fi

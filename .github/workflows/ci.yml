@@ -80,8 +80,6 @@ jobs:
           file: ./backend/Dockerfile
           push: false
           tags: speccheck-api:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Build Frontend image
         uses: docker/build-push-action@v5
@@ -90,5 +88,3 @@ jobs:
           file: ./frontend/Dockerfile
           push: false
           tags: speccheck-frontend:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max

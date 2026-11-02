@@ -3,7 +3,7 @@ FROM python:3.12-slim AS builder
 
 RUN apt-get update -qq && apt-get install -y --no-install-recommends     build-essential     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /tmp/requirements.txt
+COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements.txt
 
 # ─── Runtime stage ───────────────────────────────────────────────────────────
@@ -16,7 +16,9 @@ COPY --from=builder /install /usr/local
 WORKDIR /app
 
 COPY backend/ backend/
-COPY logs/ logs/
+RUN mkdir -p /app/data /app/logs
+
+WORKDIR /app/backend
 
 ENV PYTHONUNBUFFERED=1
 ENV OLLAMA_URL=http://ollama:11434

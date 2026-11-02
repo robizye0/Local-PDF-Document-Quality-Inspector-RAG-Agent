@@ -10,38 +10,35 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from typing import Any
 
+from audit_logger import log_audit
+from cross_reference import normalize_cross_reference_counts
+from evidence_verifier import apply_verification_decisions
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
+from feedback import PREFERENCE_PAIRS_PATH
+from invoice_validator import InvoiceValidation, reconcile_invoice_report
+from jobs import job_manager
+from ollama_client import OllamaClient
+from pdf_reader import extract_text
 from pydantic import BaseModel
-
-from audit_logger import log_audit
 from rag.chromadb_rag import SemanticRAG
+from report_consistency import normalize_report_counts
+from report_exporter import export_report_pdf
+from review_queue import enqueue_review, list_open_tickets, resolve_review_ticket
+from rule_profiles import get_profile, list_profiles
+from sandbox_validator import SandboxValidationError, run_invoice_validation
+from schemas import CrossReferenceReport
 from tracing.langfuse_tracing import (
-    trace_ollama_call,
     trace_inspection_pipeline,
     trace_pdf_extraction,
     trace_review_routing,
 )
-from ollama_client import OllamaClient, InspectionMetrics
-from pdf_reader import extract_text
-from report_exporter import export_report_pdf
-from report_consistency import normalize_report_counts
-from invoice_validator import InvoiceValidation, reconcile_invoice_report
-from sandbox_validator import SandboxValidationError, run_invoice_validation
-from evidence_verifier import apply_verification_decisions
-from feedback import PREFERENCE_PAIRS_PATH
-from jobs import job_manager
-from cross_reference import normalize_cross_reference_counts
 from webhooks import WebhookDispatcher
-from review_queue import enqueue_review, list_open_tickets, resolve_review_ticket, REVIEW_DIR
-from rule_profiles import get_profile, list_profiles
-from schemas import CrossReferenceReport, QualityInspectionReport
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
@@ -136,7 +133,9 @@ async def list_profiles_endpoint():
 @app.post("/api/v1/jobs/inspect", status_code=202)
 async def submit_inspection_job(
     file: UploadFile = File(...),
-    specification: str = Form("General manufacturing quality standards (ISO 9001 §8.6)"),
+    specification: str = Form(
+        "General manufacturing quality standards (ISO 9001 §8.6)"
+    ),
     profile_id: str | None = Form(None),
 ):
     """Queue an inspection and return immediately with a pollable job ID."""
@@ -164,7 +163,9 @@ async def get_inspection_job(job_id: str):
 @app.post("/api/v1/inspect", response_model=InspectResponse, status_code=201)
 async def inspect_document(
     file: UploadFile = File(...),
-    specification: str = Form("General manufacturing quality standards (ISO 9001 §8.6)"),
+    specification: str = Form(
+        "General manufacturing quality standards (ISO 9001 §8.6)"
+    ),
     profile_id: str | None = Form(None),
 ):
     """
@@ -190,7 +191,7 @@ def _run_inspection_job(
     temporary_file = SpooledTemporaryFile(max_size=10 * 1024 * 1024)
     temporary_file.write(content)
     temporary_file.seek(0)
-    upload = UploadFile(file=temporary_file, filename=filename)
+    upload = UploadFile(file=temporary_file, filename=filename)  # type: ignore[arg-type]
     try:
         return asyncio.run(_inspect_document_impl(upload, specification, profile_id))
     finally:
@@ -229,11 +230,18 @@ async def _inspect_document_impl(
         raise HTTPException(status_code=500, detail=f"PDF extraction failed: {exc}")
 
     if len(doc_text.strip()) < 50:
-        raise HTTPException(status_code=422, detail="Document appears to be empty or image-only (no text layer).")
+        raise HTTPException(
+            status_code=422,
+            detail="Document appears to be empty or image-only (no text layer).",
+        )
 
     # Index document in RAG vector store
     doc_id = f"doc_{upload_id}"
-    rag.index_document(doc_id, doc_text, metadata={"filename": file.filename, "profile_id": profile_id or "default"})
+    rag.index_document(
+        doc_id,
+        doc_text,
+        metadata={"filename": file.filename, "profile_id": profile_id or "default"},
+    )
 
     # Retrieve relevant chunks using semantic search
     retrieved_chunks = rag.retrieve(
@@ -245,18 +253,30 @@ async def _inspect_document_impl(
     context_text = "\n\n".join([chunk["text"] for chunk in retrieved_chunks])
 
     # Log PDF extraction trace
-    trace_pdf_extraction(str(upload_path), pages=doc_text.count("\f") + 1, chars_extracted=len(doc_text))
+    trace_pdf_extraction(
+        str(upload_path), pages=doc_text.count("\f") + 1, chars_extracted=len(doc_text)
+    )
 
     # Run Ollama compliance check with RAG context
     start_time = time.perf_counter()
-    report, error, metrics = ollama.run_compliance_check(context_text, specification, profile)
+    report, error, metrics = ollama.run_compliance_check(
+        context_text, specification, profile
+    )
     total_time_ms = (time.perf_counter() - start_time) * 1000
 
-    if error:
-        log_audit("inspection_failed", document=file.filename, profile=profile_id, error=error)
+    if error or report is None:
+        detail = error or "Inference returned no report."
+        log_audit(
+            "inspection_failed",
+            document=file.filename,
+            profile=profile_id,
+            error=detail,
+        )
         if trace:
-            trace.update(metadata={"status": "failed", "error": error})
-        raise HTTPException(status_code=502, detail=f"Ollama inference failed: {error}")
+            trace.update(metadata={"status": "failed", "error": detail})
+        raise HTTPException(
+            status_code=502, detail=f"Ollama inference failed: {detail}"
+        )
 
     # The uploaded filename is authoritative; never trust the model to name the document.
     report.document_name = file.filename
@@ -265,7 +285,10 @@ async def _inspect_document_impl(
             validation_payload = run_invoice_validation(doc_text)
             validation = InvoiceValidation(**validation_payload)
         except SandboxValidationError as exc:
-            logger.warning("Restricted invoice validator unavailable; using in-process fallback: %s", exc)
+            logger.warning(
+                "Restricted invoice validator unavailable; using in-process fallback: %s",
+                exc,
+            )
             validation = None
         report = reconcile_invoice_report(report, doc_text, validation=validation)
     else:
@@ -287,12 +310,16 @@ async def _inspect_document_impl(
     review_tickets = []
     for check in report.checks:
         if check.needs_human_review:
-            ticket = enqueue_review(check, file.filename, check.review_reason, profile_id=profile_id)
-            review_tickets.append({
-                "ticket_id": ticket.ticket_id,
-                "reason": ticket.reason,
-                "confidence": check.confidence_score,
-            })
+            ticket = enqueue_review(
+                check, file.filename, check.review_reason, profile_id=profile_id
+            )
+            review_tickets.append(
+                {
+                    "ticket_id": ticket.ticket_id,
+                    "reason": ticket.reason,
+                    "confidence": check.confidence_score,
+                }
+            )
             webhooks.dispatch(
                 "review.flagged",
                 {
@@ -380,14 +407,20 @@ async def _inspect_document_impl(
         pdf_path=str(pdf_path) if pdf_path else None,
         review_tickets=review_tickets,
     )
-@app.post("/api/v1/cross-reference", response_model=CrossReferenceResponse, status_code=201)
+
+
+@app.post(
+    "/api/v1/cross-reference", response_model=CrossReferenceResponse, status_code=201
+)
 async def cross_reference_documents(
     files: list[UploadFile] = File(...),
     specification: str = Form(...),
 ):
     """Cross-reference exactly two selectable-text PDFs against a specification."""
     if len(files) != 2:
-        raise HTTPException(status_code=422, detail="Exactly two PDF files are required.")
+        raise HTTPException(
+            status_code=422, detail="Exactly two PDF files are required."
+        )
 
     documents: list[dict[str, str]] = []
     for file in files:
@@ -401,22 +434,32 @@ async def cross_reference_documents(
         try:
             text = extract_text(upload_path, max_chars=50_000)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"PDF extraction failed for {filename}: {exc}")
+            raise HTTPException(
+                status_code=500, detail=f"PDF extraction failed for {filename}: {exc}"
+            )
         if len(text.strip()) < 50:
-            raise HTTPException(status_code=422, detail=f"{filename} appears to be empty or image-only.")
+            raise HTTPException(
+                status_code=422, detail=f"{filename} appears to be empty or image-only."
+            )
 
         doc_id = f"xref_{upload_id}"
-        rag.index_document(doc_id, text, metadata={"filename": filename, "cross_reference": "true"})
+        rag.index_document(
+            doc_id, text, metadata={"filename": filename, "cross_reference": "true"}
+        )
         chunks = rag.retrieve(specification, top_k=5, doc_id=doc_id)
-        documents.append({
-            "name": filename,
-            "text": text,
-            "context": "\n\n".join(chunk["text"] for chunk in chunks),
-        })
+        documents.append(
+            {
+                "name": filename,
+                "text": text,
+                "context": "\n\n".join(chunk["text"] for chunk in chunks),
+            }
+        )
 
     report, error, metrics = ollama.run_cross_reference(documents, specification)
     if error or report is None:
-        raise HTTPException(status_code=502, detail=f"Cross-reference inference failed: {error}")
+        raise HTTPException(
+            status_code=502, detail=f"Cross-reference inference failed: {error}"
+        )
 
     report.document_names = [document["name"] for document in documents]
     report = normalize_cross_reference_counts(report)

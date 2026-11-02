@@ -7,13 +7,13 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from schemas import ComplianceCheck
 from feedback import PREFERENCE_PAIRS_PATH, append_preference_pair
+from schemas import ComplianceCheck
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,9 @@ def enqueue_review(
     reason: str,
     profile_id: str | None = None,
 ) -> ReviewTicket:
-    ticket = ReviewTicket.from_check(check, document_name, reason, profile_id=profile_id)
+    ticket = ReviewTicket.from_check(
+        check, document_name, reason, profile_id=profile_id
+    )
     ticket.save()
     return ticket
 

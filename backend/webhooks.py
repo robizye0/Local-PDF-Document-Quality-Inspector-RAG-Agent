@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
 import logging
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -26,7 +26,9 @@ def build_webhook_request(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": payload,
     }
-    body = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    body = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "SpecCheck-Webhooks/1.0",
@@ -48,10 +50,16 @@ class WebhookDispatcher:
         timeout: float = 5.0,
         max_workers: int = 2,
     ) -> None:
-        self.url = url if url is not None else os.getenv("WEBSPEC_WEBHOOK_URL", os.getenv("WEBHOOK_URL", ""))
+        self.url = (
+            url
+            if url is not None
+            else os.getenv("WEBSPEC_WEBHOOK_URL", os.getenv("WEBHOOK_URL", ""))
+        )
         self.secret = secret if secret is not None else os.getenv("WEBHOOK_SECRET", "")
         self.timeout = timeout
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speccheck-webhook")
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="speccheck-webhook"
+        )
 
     @property
     def enabled(self) -> bool:
@@ -61,7 +69,9 @@ class WebhookDispatcher:
         if not self.url:
             return {"delivered": False, "reason": "not_configured"}
         body, headers = build_webhook_request(event, payload, self.secret)
-        response = requests.post(self.url, data=body, headers=headers, timeout=self.timeout)
+        response = requests.post(
+            self.url, data=body, headers=headers, timeout=self.timeout
+        )
         response.raise_for_status()
         return {"delivered": True, "status_code": response.status_code, "event": event}
 

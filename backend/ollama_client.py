@@ -3,7 +3,6 @@ Ollama client with Tenacity retry, JSON repair, metrics, and dynamic schema supp
 """
 
 from __future__ import annotations
-from tracing.langfuse_tracing import trace_ollama_call
 
 import json
 import logging
@@ -12,11 +11,12 @@ import time
 from typing import Any, TypeVar
 
 import requests
-from pydantic import BaseModel, ValidationError
-
-from schemas import CrossReferenceReport, EvidenceVerification, QualityInspectionReport
-from rule_profiles import get_report_schema, InspectionProfile
 from evidence_verifier import select_verification_targets
+from pydantic import BaseModel, ValidationError
+from rule_profiles import InspectionProfile, get_report_schema
+from schemas import CrossReferenceReport, EvidenceVerification, QualityInspectionReport
+from tracing.langfuse_tracing import trace_ollama_call
+
 
 # Build a concise JSON schema hint for the LLM from the Pydantic model
 def _build_schema_hint() -> str:
@@ -57,6 +57,7 @@ def _build_schema_hint_for_schema(schema_cls: type[BaseModel]) -> str:
     except Exception:
         return _build_schema_hint()
 
+
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
@@ -82,10 +83,21 @@ def _repair_json(raw: str) -> str:
     text = text.strip()
     # Remove trailing commas before closing brackets/braces
     import re
+
     text = re.sub(r",\s*([}\]])", r"\1", text)
     # Normalize common model synonyms to the strict schema vocabulary.
-    text = re.sub(r'("(?:status|overall_status)"\s*:\s*)"PASSED"', r'\1"PASS"', text, flags=re.IGNORECASE)
-    text = re.sub(r'("(?:status|overall_status)"\s*:\s*)"FAILED"', r'\1"FAIL"', text, flags=re.IGNORECASE)
+    text = re.sub(
+        r'("(?:status|overall_status)"\s*:\s*)"PASSED"',
+        r'\1"PASS"',
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r'("(?:status|overall_status)"\s*:\s*)"FAILED"',
+        r'\1"FAIL"',
+        text,
+        flags=re.IGNORECASE,
+    )
     return text
 
 
@@ -99,7 +111,9 @@ class OllamaClient:
         timeout: int = 120,
         provider: str | None = None,
     ):
-        self.provider = (provider or os.getenv("INFERENCE_PROVIDER", "ollama")).lower()
+        self.provider = (
+            provider or os.getenv("INFERENCE_PROVIDER", "ollama") or "ollama"
+        ).lower()
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
@@ -135,6 +149,7 @@ class OllamaClient:
         Call Ollama with retry logic and JSON repair.
         Returns (parsed_model, error_or_None, metrics_or_None).
         """
+        payload: Any
         if self.openai_compatible:
             payload = {
                 "model": self.model,
@@ -179,7 +194,11 @@ class OllamaClient:
             elapsed_ms = (time.perf_counter() - start) * 1000
             response_body = resp.json()
             if self.openai_compatible:
-                raw_text = response_body.get("choices", [{}])[0].get("message", {}).get("content", "")
+                raw_text = (
+                    response_body.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
                 usage = response_body.get("usage", {})
                 prompt_tokens = usage.get("prompt_tokens")
                 completion_tokens = usage.get("completion_tokens")
@@ -210,7 +229,9 @@ class OllamaClient:
                 if self.openai_compatible:
                     payload["temperature"] = max(0.0, payload["temperature"] - 0.05)
                 else:
-                    payload["options"]["temperature"] = max(0.0, payload["options"]["temperature"] - 0.05)
+                    payload["options"]["temperature"] = max(
+                        0.0, payload["options"]["temperature"] - 0.05
+                    )
 
         return None, last_error or "Max retries exceeded", None
 
@@ -223,7 +244,8 @@ class OllamaClient:
         schema_hint = _build_schema_hint_for_schema(CrossReferenceReport)
         system = (
             "You are a cross-document compliance auditor. Compare exactly two source documents "
-            "against the supplied specification. Identify matching requirements and contradictions. "
+            "against the supplied specification. Identify matching requirements and "
+            "contradictions. "
             "Never invent missing evidence. Return STRICT JSON only matching this schema:\n\n"
             f"{schema_hint}\n\n"
             "Rules:\n"
@@ -279,13 +301,15 @@ class OllamaClient:
         document_text: str,
         specification: str,
         profile: InspectionProfile | None = None,
-    ) -> tuple[BaseModel | None, str | None, InspectionMetrics | None]:
+    ) -> tuple[Any | None, str | None, InspectionMetrics | None]:
         """
         Full compliance-check pipeline.
         Uses dynamic profile if provided; falls back to generic system prompt.
         """
         if profile:
-            schema_hint = _build_schema_hint_for_schema(get_report_schema(profile.profile_id))
+            schema_hint = _build_schema_hint_for_schema(
+                get_report_schema(profile.profile_id)
+            )
             system = (
                 f"{profile.system_prompt}\n\n"
                 "Output a STRICT JSON object matching this schema:\n\n"

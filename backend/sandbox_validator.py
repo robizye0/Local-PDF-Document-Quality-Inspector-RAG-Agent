@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -18,7 +18,9 @@ class SandboxValidationError(RuntimeError):
     """Raised when the restricted validator cannot produce a result."""
 
 
-def run_invoice_validation(document_text: str, timeout_seconds: float = 3.0) -> dict[str, Any]:
+def run_invoice_validation(
+    document_text: str, timeout_seconds: float = 3.0
+) -> dict[str, Any]:
     payload = json.dumps({"text": document_text[:50_000]}, ensure_ascii=False)
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8"}
     try:
@@ -37,7 +39,9 @@ def run_invoice_validation(document_text: str, timeout_seconds: float = 3.0) -> 
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SandboxValidationError(f"validator worker failed: {exc}") from exc
     if completed.returncode != 0:
-        raise SandboxValidationError(completed.stderr.strip() or "validator worker failed")
+        raise SandboxValidationError(
+            completed.stderr.strip() or "validator worker failed"
+        )
     try:
         return json.loads(completed.stdout)
     except json.JSONDecodeError as exc:

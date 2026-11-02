@@ -14,8 +14,14 @@ def select_verification_targets(report: Any, max_targets: int = 3) -> list[Any]:
         or check.confidence_score < 0.85
         or check.severity_level >= 4
     ]
-    candidates.sort(key=lambda check: (not check.needs_human_review, check.confidence_score, check.check_id))
-    return candidates[:max(0, max_targets)]
+    candidates.sort(
+        key=lambda check: (
+            not check.needs_human_review,
+            check.confidence_score,
+            check.check_id,
+        )
+    )
+    return candidates[: max(0, max_targets)]
 
 
 def apply_verification_decisions(report: Any, decisions: Iterable[Any]) -> Any:
@@ -31,7 +37,9 @@ def apply_verification_decisions(report: Any, decisions: Iterable[Any]) -> Any:
         reason = (decision.reason or "").strip()
         if decision.verdict == "UNCERTAIN" or confidence < 0.85:
             check.needs_human_review = True
-            check.review_reason = reason or "Evidence verifier returned an uncertain result."
+            check.review_reason = (
+                reason or "Evidence verifier returned an uncertain result."
+            )
             continue
 
         if decision.verdict not in {"PASS", "FAIL"}:

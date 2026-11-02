@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from sentence_transformers import SentenceTransformer
-
 from rule_profiles import get_profile
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +38,15 @@ class SemanticRAG:
             name="pdf_chunks",
             metadata={"hnsw:space": "cosine"},
         )
-        logger.info("RAG initialized: collection=%s, embedding=%s", self.collection.name, EMBEDDING_MODEL)
+        logger.info(
+            "RAG initialized: collection=%s, embedding=%s",
+            self.collection.name,
+            EMBEDDING_MODEL,
+        )
 
-    def chunk_text(self, text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    def chunk_text(
+        self, text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
+    ) -> list[str]:
         """
         Split text into overlapping chunks.
         Tries to respect paragraph boundaries; falls back to character splitting.
@@ -76,7 +80,9 @@ class SemanticRAG:
         logger.info("Chunked text into %d chunks", len(chunks))
         return chunks
 
-    def index_document(self, doc_id: str, text: str, metadata: dict[str, Any] | None = None) -> int:
+    def index_document(
+        self, doc_id: str, text: str, metadata: dict[str, Any] | None = None
+    ) -> int:
         """
         Chunk and index a PDF document into ChromaDB.
         Returns the number of chunks indexed.
@@ -150,11 +156,17 @@ class SemanticRAG:
         retrieved = []
         if results["documents"] and results["documents"][0]:
             for i, doc in enumerate(results["documents"][0]):
-                retrieved.append({
-                    "text": doc,
-                    "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                    "distance": results["distances"][0][i] if results["distances"] else None,
-                })
+                retrieved.append(
+                    {
+                        "text": doc,
+                        "metadata": (
+                            results["metadatas"][0][i] if results["metadatas"] else {}
+                        ),
+                        "distance": (
+                            results["distances"][0][i] if results["distances"] else None
+                        ),
+                    }
+                )
 
         logger.info("Retrieved %d chunks for query", len(retrieved))
         return retrieved

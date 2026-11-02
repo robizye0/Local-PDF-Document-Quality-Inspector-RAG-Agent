@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import importlib.util
 import re
+from dataclasses import dataclass
 from typing import Iterable
 
 
@@ -47,7 +47,9 @@ def evaluate_rag_case(
     relevant_chunk_count = sum(
         any(term <= tokens for term in expected) for tokens in context_tokens
     )
-    context_precision = relevant_chunk_count / len(context_list) if context_list else 0.0
+    context_precision = (
+        relevant_chunk_count / len(context_list) if context_list else 0.0
+    )
     covered_terms = sum(term <= all_context for term in expected)
     context_recall = covered_terms / len(expected) if expected else 0.0
 
@@ -59,9 +61,15 @@ def evaluate_rag_case(
     )
     answer_claims = len(sentence_terms)
     faithfulness = supported_claims / answer_claims if answer_claims else 1.0
-    answer_relevance = sum(term <= answer_tokens for term in expected) / len(expected) if expected else 0.0
+    answer_relevance = (
+        sum(term <= answer_tokens for term in expected) / len(expected)
+        if expected
+        else 0.0
+    )
     overall = (faithfulness + answer_relevance + context_precision + context_recall) / 4
-    return RagEvaluation(faithfulness, answer_relevance, context_precision, context_recall, overall)
+    return RagEvaluation(
+        faithfulness, answer_relevance, context_precision, context_recall, overall
+    )
 
 
 def _sentence_terms(answer: str) -> list[set[str]]:

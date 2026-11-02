@@ -16,6 +16,7 @@ PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Built-in profiles ----------------------------------------------------------
 
+
 class PcbCheckResult(BaseModel):
     check_id: str
     clause_reference: str
@@ -129,6 +130,7 @@ class InvoiceInspectionReport(BaseModel):
 
 # Profile registry -----------------------------------------------------------
 
+
 class InspectionProfile(BaseModel):
     profile_id: str
     name: str
@@ -145,8 +147,10 @@ BUILTIN_PROFILES: dict[str, InspectionProfile] = {
         description="IPC-A-610, solder joint quality, trace width, drill sizing",
         report_schema_name="PcbInspectionReport",
         system_prompt=(
-            "You are a PCB Quality Inspector. Verify the document against PCB manufacturing standards (IPC-A-610, Gerber spec). "
-            "Focus on: solder joint quality, trace width, drill sizing, annular ring, surface finish. "
+            "You are a PCB Quality Inspector. Verify the document against PCB manufacturing "
+            "standards (IPC-A-610, Gerber spec). "
+            "Focus on: solder joint quality, trace width, drill sizing, annular ring, "
+            "surface finish. "
             "Output STRICT JSON only."
         ),
         fields=["trace_width", "solder_quality", "drill_sizes", "annular_ring"],
@@ -170,7 +174,8 @@ BUILTIN_PROFILES: dict[str, InspectionProfile] = {
         report_schema_name="InvoiceInspectionReport",
         system_prompt=(
             "You are a financial compliance auditor. Verify the document as a commercial invoice. "
-            "Check: seller/buyer IDs, line items, quantities, unit prices, totals match, tax calculation. "
+            "Check: seller/buyer IDs, line items, quantities, unit prices, totals match, "
+            "tax calculation. "
             "Output STRICT JSON only."
         ),
         fields=["seller_id", "buyer_id", "line_items", "totals_match", "tax_calc"],
@@ -187,7 +192,9 @@ SCHEMA_MAP: dict[str, type[BaseModel]] = {
 
 def get_profile(profile_id: str) -> InspectionProfile:
     if profile_id not in BUILTIN_PROFILES:
-        raise ValueError(f"Unknown profile: {profile_id}. Available: {list(BUILTIN_PROFILES)}")
+        raise ValueError(
+            f"Unknown profile: {profile_id}. Available: {list(BUILTIN_PROFILES)}"
+        )
     return BUILTIN_PROFILES[profile_id]
 
 

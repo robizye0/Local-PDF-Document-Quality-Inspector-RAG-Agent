@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
-from typing import NamedTuple
-
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Any, NamedTuple
 
 INVOICE_FIELDS = (
     "Seller ID",
@@ -25,7 +24,9 @@ class InvoiceValidation(NamedTuple):
 
 
 def _money(value: str) -> Decimal:
-    return Decimal(value.replace(",", "").strip()).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return Decimal(value.replace(",", "").strip()).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
 
 
 def _has_value(text: str, label: str) -> bool:
@@ -46,11 +47,15 @@ def _has_quantity(text: str) -> bool:
 
 
 def _has_unit_price(text: str) -> bool:
-    return bool(re.search(r"(?i)\bunit\s+price\s*[:=|]\s*\$?\s*\d+(?:[,.]\d{1,2})?", text))
+    return bool(
+        re.search(r"(?i)\bunit\s+price\s*[:=|]\s*\$?\s*\d+(?:[,.]\d{1,2})?", text)
+    )
 
 
 def _has_total(text: str) -> bool:
-    return bool(re.search(r"(?im)^\s*(?:subtotal|grand\s+total|total)\s*[:=]\s*\$?\s*\d", text))
+    return bool(
+        re.search(r"(?im)^\s*(?:subtotal|grand\s+total|total)\s*[:=]\s*\$?\s*\d", text)
+    )
 
 
 def _tax_is_correct(text: str) -> bool:
@@ -74,9 +79,9 @@ def _tax_is_correct(text: str) -> bool:
     if not (subtotal and rate and tax):
         return False
     try:
-        expected = (_money(subtotal.group(1)) * Decimal(rate.group(1)) / Decimal("100")).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
+        expected = (
+            _money(subtotal.group(1)) * Decimal(rate.group(1)) / Decimal("100")
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return expected == _money(tax.group(1))
     except (InvalidOperation, ValueError):
         return False
@@ -97,7 +102,9 @@ def validate_invoice_text(text: str) -> InvoiceValidation:
         for field, passed in fields.items()
         if not passed
     }
-    return InvoiceValidation(fields=fields, is_valid=all(fields.values()), reasons=reasons)
+    return InvoiceValidation(
+        fields=fields, is_valid=all(fields.values()), reasons=reasons
+    )
 
 
 def reconcile_invoice_report(

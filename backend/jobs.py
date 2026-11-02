@@ -6,11 +6,11 @@ compatible with a future Celery/Redis worker deployment.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 import os
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 
@@ -24,9 +24,12 @@ class JobManager:
             import logging
 
             logging.getLogger(__name__).warning(
-                "JOB_BACKEND=celery requested; Celery/Redis adapter is not configured, using thread backend."
+                "JOB_BACKEND=celery requested; Celery/Redis adapter is not configured, "
+                "using thread backend."
             )
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speccheck-job")
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="speccheck-job"
+        )
         self._jobs: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
@@ -47,7 +50,13 @@ class JobManager:
         self._executor.submit(self._run, job_id, function, args, kwargs)
         return job_id
 
-    def _run(self, job_id: str, function: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+    def _run(
+        self,
+        job_id: str,
+        function: Callable[..., Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
         self._update(job_id, status="running")
         try:
             result = function(*args, **kwargs)

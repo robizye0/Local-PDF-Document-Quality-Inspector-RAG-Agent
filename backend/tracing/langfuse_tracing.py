@@ -10,8 +10,11 @@ import time
 from functools import wraps
 from typing import Any, Callable
 
+Langfuse: Any = None
 try:
-    from langfuse import Langfuse
+    from langfuse import Langfuse as _Langfuse
+
+    Langfuse = _Langfuse
 except ImportError:
     Langfuse = None
 
@@ -19,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize Langfuse client
 # Reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from env
-langfuse_client = None
+langfuse_client: Any = None
 LANGFUSE_ENABLED = False
 
 if Langfuse is not None:
@@ -29,7 +32,9 @@ if Langfuse is not None:
         if hasattr(langfuse_client, "start_observation"):
             LANGFUSE_ENABLED = True
         else:
-            logger.warning("Langfuse client missing start_observation; tracing disabled.")
+            logger.warning(
+                "Langfuse client missing start_observation; tracing disabled."
+            )
     except Exception as exc:
         logger.warning("Langfuse initialization failed: %s", exc)
 
@@ -60,6 +65,7 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
     Decorator to trace Ollama API calls with Langfuse.
     Records: prompt tokens, completion tokens, latency, model version.
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -72,7 +78,9 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                 elapsed_ms = (time.perf_counter() - start) * 1000
 
                 # Extract metrics from result tuple (report, error, metrics)
-                report, error, metrics = result if isinstance(result, tuple) else (result, None, None)
+                report, error, metrics = (
+                    result if isinstance(result, tuple) else (result, None, None)
+                )
 
                 # Create trace span
                 span = _get_observation(
@@ -94,7 +102,10 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                 if error:
                     span.update(
                         output={"error": str(error)},
-                        metadata={"status": "error", "latency_ms": round(elapsed_ms, 2)},
+                        metadata={
+                            "status": "error",
+                            "latency_ms": round(elapsed_ms, 2),
+                        },
                         level="ERROR",
                     )
                 else:
@@ -103,12 +114,14 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                         "latency_ms": round(elapsed_ms, 2),
                     }
                     if metrics:
-                        output_data.update({
-                            "prompt_tokens": metrics.prompt_tokens,
-                            "completion_tokens": metrics.completion_tokens,
-                            "tokens_per_second": metrics.tokens_per_second,
-                            "model_version": metrics.model_version,
-                        })
+                        output_data.update(
+                            {
+                                "prompt_tokens": metrics.prompt_tokens,
+                                "completion_tokens": metrics.completion_tokens,
+                                "tokens_per_second": metrics.tokens_per_second,
+                                "model_version": metrics.model_version,
+                            }
+                        )
                     span.update(output=output_data)
 
                 span.end()
@@ -120,7 +133,10 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                 span = _get_observation(
                     name=f"{operation_name}.error",
                     as_type="span",
-                    metadata={"status": "exception", "latency_ms": round(elapsed_ms, 2)},
+                    metadata={
+                        "status": "exception",
+                        "latency_ms": round(elapsed_ms, 2),
+                    },
                     level="ERROR",
                 )
                 if span is not None:
@@ -130,6 +146,7 @@ def trace_ollama_call(operation_name: str = "ollama.generate"):
                 raise
 
         return wrapper
+
     return decorator
 
 

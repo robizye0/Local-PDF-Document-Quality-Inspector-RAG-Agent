@@ -12,7 +12,9 @@ FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 PREFERENCE_PAIRS_PATH = FEEDBACK_DIR / "preference_pairs.jsonl"
 
 
-def build_preference_pair(ticket: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:
+def build_preference_pair(
+    ticket: dict[str, Any], resolution: dict[str, Any]
+) -> dict[str, Any]:
     """Build a training-ready rejected/chosen pair without discarding audit data."""
     chosen = (
         resolution.get("corrected_check")
